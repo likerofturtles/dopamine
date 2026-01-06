@@ -9,7 +9,7 @@ This a 100% free-to-use, non-profit (solo) Discord bot project by LikerOfTurtles
 
 # Invite Dopamine
 
-Invite the official, pre-hosted Dopamine (no self-hosting required): https://top.gg/bot/1411266382380924938
+Invite the official, pre-hosted Dopamine bot (no self-hosting required): https://top.gg/bot/1411266382380924938
 
 ## Features
 
