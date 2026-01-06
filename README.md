@@ -5,6 +5,8 @@ Dopamine is a feature-rich Discord moderation and utility bot built with a focus
 
 The bot is designed to handle everything from point-based moderation to automated server engagement tools like Haiku detection and scheduled messages.
 
+This a 100% free-to-use, non-profit (solo) Discord bot project by LikerOfTurtles.
+
 ## Features
 
 ### Moderation & Administration
