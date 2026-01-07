@@ -11,7 +11,7 @@ This a 100% free-to-use, non-profit (solo) Discord bot project by LikerOfTurtles
 
 Invite the official, pre-hosted Dopamine bot (no self-hosting required): https://top.gg/bot/1411266382380924938
 
-## Features
+# Features
 
 ### Moderation & Administration
 
@@ -33,7 +33,7 @@ Invite the official, pre-hosted Dopamine bot (no self-hosting required): https:/
 
 * Global Notes: Store and retrieve notes across any server where the bot is present (requires user-install/profile addition).
 
-## Installation & Setup
+# Installation & Setup
 
 ### Prerequisites:
 
@@ -59,7 +59,7 @@ Invite the official, pre-hosted Dopamine bot (no self-hosting required): https:/
 
 ```python main.py```
 
-## License
+# License
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). This means if you modify the bot and run it as a service, you must share your modified source code under the same license.
 
