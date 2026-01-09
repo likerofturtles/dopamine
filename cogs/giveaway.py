@@ -27,12 +27,12 @@ class GiveawayEditSelect:
             discord.SelectOption(label="1. Giveaway Host", value="host", description="The host name to be shown in the giveaway Embed."),
             discord.SelectOption(label="2. Extra Entries Role", value="extra", description="Roles that will give extra entries. Each role gives +1 entries."),
             discord.SelectOption(label="3. Required Roles", value="required", description="Roles required to participate."),
-            discord.SelectOption(label="4. Required Roles Behavior", value="behavior", description="The behavior of the required roles feature."),
+            discord.SelectOption(label="4. Required Roles Behaviour", value="behavior", description="The behavior of the required roles feature."),
             discord.SelectOption(label="5. Winner Role", value="winner_role", description="Role given to winners."),
             discord.SelectOption(label="6. Blacklisted Roles", value="blacklist", description="Roles that cannot participate."),
             discord.SelectOption(label="7. Image", value="image", description="Provide a valid URL for the Embed image."),
             discord.SelectOption(label="8. Thumbnail", value="thumbnail", description="Provide a valid URL for the Embed thumbnail."),
-            discord.SelectOption(label="9. Color", value="color", description="Set embed color (Hex or Valid Name).")
+            discord.SelectOption(label="9. Colour", value="color", description="Set embed color (Hex or Valid Name).")
         ]
         super().__init__(placeholder="Select a setting to customize...", options=options)
         # TO BE IMPLEMENTED
@@ -156,5 +156,12 @@ class RoleSelectView(discord.ui.View):
     def __init__(self, trait: str, draft: GiveawayDraft):
         super().__init__()
         self.add_item(discord.ui.Select(placeholder=f"Select {trait}...", min_values=1, max_values=20))
+        self.trait = trait
+        self.draft = draft
+
+class WinnerRoleSelectView(discord.ui.View):
+    def __init__(self, trait: str, draft: GiveawayDraft):
+        super().__init__()
+        self.add_item(discord.ui.Select(placeholder=f"Select {trait}...", min_values=1, max_values=1))
         self.trait = trait
         self.draft = draft
