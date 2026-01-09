@@ -151,3 +151,10 @@ class MemberSelectView(discord.ui.View):
         self.draft = draft
 
     #TO BE IMPLEMENTED
+
+class RoleSelectView(discord.ui.View):
+    def __init__(self, trait: str, draft: GiveawayDraft):
+        super().__init__()
+        self.add_item(discord.ui.Select(placeholder=f"Select {trait}...", min_values=1, max_values=20))
+        self.trait = trait
+        self.draft = draft
