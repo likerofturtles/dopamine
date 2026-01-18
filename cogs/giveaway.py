@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Set
 import discord
@@ -285,3 +286,166 @@ async def end_giveaway(self, giveaway_id: int, guild_id: int):
 async def reroll_giveaway(self, giveaway_id: int, winners_to_pick: int, include_previous: bool, remove_old_roles: bool):
      # TO BE IMPLEMENTED
     pass
+
+class Giveaways(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.active_giveaways: Dict[int, Dict[int, any]] = {}
+        self.db_pool: Optional[asyncio.Queue[aiosqlite.connection]] = None
+        self.check_giveaways.start()
+
+    async def cog_load(self):
+        await self.init_pools()
+        await self.init_db()
+
+    async def cog_unload(self):
+        self.check_giveaways.cancel()
+        if self.db_pool is not None:
+            while not self.db_pool.empty():
+                conn = await self.db_pool.get()
+                await conn.close()
+
+    async def init_pools(self, pool_size: int = 5):
+        if self.db_pool is None:
+            self.db_pool = asyncio.Queue(maxsize = pool_size)
+            for _ in range (pool_size):
+                conn = await aiosqlite.connect(
+                    GDB_PATH,
+                    timeout=5,
+                    isolation_level=None,
+                )
+                await conn.execute("PRAGMA busy_timeout=5000")
+                await conn.execute("PRAGMA journal_mode=WAL")
+                await conn.execute ("PRAGMA synchronous = NORMAL")
+                await conn.commit()
+                await self.db_pool.put(conn)
+
+    @asynccontextmanager
+    async def acquire_db(self):
+        conn = await self.db_pool.get()
+        try:
+            yield conn
+        finally:
+            await self.db_pool.put(conn)
+
+    async def init_db(self):
+        async with self.acquire_db as db:
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS giveaways (
+                    guild_id INTEGER,
+                    giveaway_id INTEGER,
+                    channel_id INTEGER,
+                    message_id INTEGER,
+                    prize TEXT,
+                    winners_count INTEGER,
+                    end_time INTEGER,
+                    host_id INTEGER,
+                    required_roles TEXT,
+                    req_behavior INTEGER,
+                    blacklisted_roles TEXT,
+                    extra_entry_roles TEXT,
+                    winner_role_id INTEGER,
+                    image_url TEXT,
+                    thumbnail_url TEXT,
+                    color TEXT,
+                    ended INTEGER DEFAULT 0,
+                    PRIMARY KEY (guild_id, giveaway_id)
+                )
+            ''')
+
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS giveaway_participants (
+                    guild_id INTEGER,
+                    giveaway_id INTEGER,
+                    user_id INTEGER,
+                    PRIMARY KEY (guild_id, giveaway_id, user_id)
+                )
+            ''')
+
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS giveaway_roles (
+                    giveaway_id INTEGER,
+                    user_id INTEGER,
+                    PRIMARY KEY (giveaway_id, user_id)
+                )
+            ''')
+
+            await db.commit()
+
+    @tasks.loop(seconds=10)
+    async def check_giveaways(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        async with self.acquire_db as db:
+            async with db.execute(
+                "SELECT giveaway_id, guild_id FROM giveaways WHERE end_time <= ? AND ended = 0",
+                (now,)
+            ) as cursor:
+                to_end = await cursor.fetchall()
+
+        for giveaway_id, guild_id in to_end:
+            await self.end_giveaway_logic(giveaway_id, guild_id)
+
+    async def end_giveaway_logic(self, giveaway_id: int, guild_id: int):
+        async with self.acquire_db as db:
+            async with db.execute("SELECT * from giveaways WHERE giveaway_id = ? and giveaway_id = ?", (giveaway_id, guild_id)) as cursor:
+                g = await cursor.fetchone()
+                if not g: return
+
+            async with db.execute("SELECT user_id FROM giveaway_participants WHERE giveaway_id =?", (giveaway_id,)) as cursor:
+                rows = await cursor.fetchall()
+                pool = [r[0] for r in rows]
+
+        if not pool:
+            channel = self.bot.get_channel(g[2])
+            if channel:
+                await channel.send(embed=discord.Embed(title="Giveaway Ended", description=f"Giveaway for **{g[4]}** ended with no participants.", colour=discord.Colour.red()))
+            await self.mark_as_ended(giveaway_id, guild_id)
+            return
+
+        winner_count = min(len(pool), g[5])
+        winners = random.sample(pool, winner_count)
+
+        await self.mark_as_ended(giveaway_id, guild_id)
+        async with self.acquire_db as db:
+            for w_id in winners:
+                await db.execute("INSERT INTO giveaway_winners (giveaway_id, user_id) VALUES (?, ?)", (giveaway_id, w_id))
+                await db.commit()
+
+        guild = self.bot.get_guild(guild_id)
+        channel = guild.get_channel(g[2]) if guild else None
+        if channel:
+            try:
+                msg = await channel.fetch_message(g[3])
+                embed_embed = self.create_embed_from_db(g, winners=winners)
+                await msg.edit(embed=embed_embed, view=None)
+
+                mention_str = ", ".join([f"<@{w}>" for w in winners])
+                await channel.send (f"Congratulations to: {mention_str} for winning **{g[4]}!**")
+
+                if g[12]:
+                    role = guild.get_role(g[12])
+                    if role:
+                        for w_id in winners:
+                            member = guild.get_member(w_id)
+                            if member: await member.add_roles(role)
+
+            except Exception:
+                    pass
+
+    async def mark_as_ended(self, giveaway_id: int, guild_id: int):
+        async with self.acquire_db as db:
+            await db.execute("UPDATE giveaways SET ended = 1 WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, guild_id))
+            await db.commit()
+
+    def create_embed_from_db(self, row, winners=None):
+        prize = row[4]
+        end_ts = row[6]
+        color_str = row[15] or "Blue"
+
+        embed = discord.Embed(
+            title="GIVEAWAY ENDED",
+            description=f"Ended at: **<t:{end_ts}:R>**",
+            colour=discord.Colour.red()
+        )
+        embed.add_field(name="Winners", value=", ".join([f"<@{w}>" for w in winners]), inline=False)
+        return embed
