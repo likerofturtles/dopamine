@@ -273,3 +273,6 @@ async def save_giveaway(self, draft: GiveawayDraft, message_id: int):
 async def end_giveaway(self, giveaway_id: int, guild_id: int):
     # TO BE IMPLEMENTED
     pass
+
+async def reroll_giveaway(self, giveaway_id: int, winners_to_pick: int, include_previous: bool, remove_old_roles: bool):
+    pass
