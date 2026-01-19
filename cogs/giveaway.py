@@ -119,7 +119,7 @@ class BehaviorSelect(discord.ui.Select):
         super().__init__(placeholder="Choose role requirement behaviour...", options=options)
 
         async def callback(self, interaction: discord.Interaction):
-            self.draft.required_behavior = int(self.values[0])
+            self.draft.required_behaviour = int(self.values[0])
             await interaction.response.send_message("Role requirement behaviour updated successfully!", ephemeral=True)
 
 class GiveawayPreviewView(discord.ui.View):
@@ -293,7 +293,7 @@ class Giveaways(commands.Cog):
             ''')
 
             await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaway_roles (
+                CREATE TABLE IF NOT EXISTS giveaway_winners (
                     giveaway_id INTEGER,
                     user_id INTEGER,
                     PRIMARY KEY (giveaway_id, user_id)
