@@ -431,7 +431,7 @@ class Giveaways(commands.Cog):
 
         if draft.required_roles:
             role_mentions = ", ".join([f"<@&{r}>" for r in draft.required_roles])
-            mode = "all of the following" if draft.required_behavior == 0 else "one of the following"
+            mode = "all of the following" if draft.required_behaviour == 0 else "one of the following"
             embed.add_field(name="Requirements", value=f"Must have **{mode}**: {role_mentions}", inline=False)
 
         if draft.image:
@@ -446,7 +446,7 @@ class Giveaways(commands.Cog):
         black_roles = ",".join(map(str, draft.blacklisted_roles)) if draft.blacklisted_roles else ""
         extra_roles = ",".join(map(str, draft.extra_entries)) if draft.extra_entries else ""
 
-        giveaway_id = int(discord.utils.utcnow().timestamp())
+        giveaway_id = int(discord.utils.utcnow().timestamp()) + random.randint(1, 69)
 
         async with self.acquire_db() as db:
             await db.execute('''
@@ -457,7 +457,7 @@ class Giveaways(commands.Cog):
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                              ''', (
                                  draft.guild_id, giveaway_id, draft.channel_id, message_id, draft.prize, draft.winners,
-                                 draft.end_time, draft.host_id, req_roles, draft.required_behavior, black_roles,
+                                 draft.end_time, draft.host_id, req_roles, draft.required_behaviour, black_roles,
                                  extra_roles, draft.winner_role, draft.image, draft.thumbnail, draft.color
                              ))
             await db.commit()
