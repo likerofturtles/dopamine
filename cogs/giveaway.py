@@ -30,8 +30,8 @@ class GiveawayDraft:
     thumbnail: Optional[str] = None
     color: str = "discord.Color.blue()"
 
-class GiveawayEditSelect:
-    def __init__(self):
+class GiveawayEditSelect(discord.ui.Select):
+    def __init__(self, cog, draft: GiveawayDraft):
         options = [
             discord.SelectOption(label="1. Giveaway Host", value="host", description="The host name to be shown in the giveaway Embed."),
             discord.SelectOption(label="2. Extra Entries Role", value="extra", description="Roles that will give extra entries. Each role gives +1 entries."),
@@ -144,9 +144,9 @@ class GiveawayPreviewView(discord.ui.View):
 
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.gray)
     async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = GiveawayEditSelect(self.cog, self.draft, self)
+        view = GiveawayEditSelect(self, self.cog, self.draft)
 
-        await interaction.response.send_message(embed=discord.embed(title="Edit Giveaway", description="Select what you want to edit using the dropdown below.", colour=discord.Colour.blue()), view=view, ephemeral=True)
+        await interaction.response.send_message(embed=discord.Embed(title="Edit Giveaway", description="Select what you want to edit using the dropdown below.", colour=discord.Colour.blue()), view=view, ephemeral=True)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -448,7 +448,7 @@ class Giveaways(commands.Cog):
 
         giveaway_id = int(discord.utils.utcnow().timestamp())
 
-        async with self.acquire_dv() as db:
+        async with self.acquire_db() as db:
             await db.execute('''
                              INSERT INTO giveaways (guild_id, giveaway_id, channel_id, message_id, prize, winners_count,
                                                     end_time, host_id, required_roles, req_behaviour, blacklisted_roles,
