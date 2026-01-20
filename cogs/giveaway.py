@@ -159,8 +159,28 @@ class GiveawayPreviewView(discord.ui.View):
 
     @discord.ui.button(label="Start", style=discord.ButtonStyle.green)
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        #TO BE IMPLEMENTED
-        await interaction.response.send_message(embed=discord.Embed(description="Giveaway started successfully!", colour=discord.Colour.green()), ephemeral=True)
+        embed = self.cog.create_giveaway_embed(self.draft)
+
+        channel = self.cog.bot.get_channel(self.draft.channel_id)
+        if not channel:
+            try:
+                channel = await self.cog.bot.fetch_channel(self.draft.channel_id)
+            except (discord.Forbidden, discord.NotFound):
+                return await interaction.response.send_message("I searched far and wide, but I can't find the channel chosen for the giveaway!\n\nEnsure that I have the necessary permissions.", ephemeral=True)
+
+        view = GiveawayJoinView(self.cog)
+
+        msg = await channel.send(embed=embed, view=view)
+
+        giveaway_id = await self.cog.save_giveaway(self.draft, msg.id)
+
+        embed.set_footer(text=f"ID: {giveaway_id}")
+        await msg.edit(embed=embed)
+
+        embed = discord.Embed(description=f"Giveaway started successfully in {channel.mention}!",
+                              colour=discord.Colour.green())
+        embed.set_footer(text=f"ID: {giveaway_id}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         self.stop()
 
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.gray)
@@ -333,7 +353,7 @@ class GiveawayJoinView(discord.ui.View):
                     await db.commit()
                     return await interaction.response.send_message("You have successfully left the giveaway.", ephemeral=True)
 
-        await interaction.response.send_message("You have successfully entered the giveaway!", ephemeral=True)
+        await interaction.response.send_message("🎉 You have successfully entered the giveaway!", ephemeral=True)
 
     @discord.ui.button(
         label="Participants",
@@ -580,7 +600,7 @@ class Giveaways(commands.Cog):
         if draft.thumbnail:
             embed.set_thumbnail(url=draft.thumbnail)
 
-        embed.set_footer("ID: [Giveaway ID will be generated and shown here once you click start.]")
+        embed.set_footer(text="ID: [Giveaway ID will be generated and shown here once you click start.]")
 
         return embed
 
