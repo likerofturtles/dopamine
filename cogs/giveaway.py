@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from importlib.machinery import all_suffixes
 from typing import Optional, List, Dict, Set
 import discord
 from discord import app_commands, Interaction
@@ -273,6 +274,90 @@ class GiveawayEditView(discord.ui.View):
                 new_view.add_item(MemberSelectView(self.draft))
                 await interaction.response.send_message("Choose the host for this giveaway:", view=new_view, ephemeral=True)
 
+class GiveawayJoinView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        emoji="🎉",
+        label="TOBEIMPLEMENTED",
+        style=discord.ui.ButtonStyle.blurple,
+        custom_id="persistent_giveaway_join"
+    )
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.message.embeds:
+            return
+
+        footer_text = interaction.message.embeds[0].footer.text
+        try:
+            giveaway_id = int(footer_text.split(": ")[1])
+        except (IndexError, ValueError):
+            return await interaction.response.send_message("Could not find Giveaway ID.", ephemeral=True)
+
+        async with self.cog.acquire_db() as db:
+            async with db.execute(
+                "SELECT * FROM giveaways WHERE giveaway_id = ? AND guild_id = ?",
+                    (giveaway_id, interaction.guild_id)
+            ) as cursor:
+                g = await cursor.fetchone()
+
+        if not g or g[16] == 1:
+            return await interaction.response.send_message("This giveaway has already ended!", ephemeral=True)
+
+        if g[10]:
+            blacklisted_ids = [int(r) for r in g[10].split(",")]
+            if any(role.id in blacklisted_ids for role in interaction.user.roles):
+                return await interaction.response.send_message("You cannot join this giveaway because you have a blacklisted role.", ephemeral=True)
+
+        if g[8]:
+            req_ids = [int(r) for r in g[8].split(",")]
+            user_role_ids = [role.id for role in interaction.user.roles]
+
+            if g[9] == 0:
+                if not all(r in user_role_ids for r in req_ids):
+                    return await interaction.response.send_message("You cannot join this giveaway because you don't have all the required roles.", ephemeral=True)
+
+            else:
+                if not any(r in user_role_ids for r in req_ids):
+                    return await interaction.response.send_message("You cannot join this giveaway because you don't have one of the required roles.", ephemeral=True)
+
+        async with self.cog.acquire_db() as db:
+            async with db.execute(
+                "SELECT 1 FROM giveaway_participants WHERE giveaway_id = ? AND user_id = ?",
+                    (giveaway_id, interaction.user.id)
+            ) as cursor:
+                if await cursor.fetchone():
+                    await db.execute(
+                        "DELETE FROM giveaway_participants WHERE giveaway_id = ? AND user_id = ?",
+                        (giveaway_id, interaction.user.id)
+                    )
+                    await db.commit()
+                    return await interaction.response.send_message("You have successfully left the giveaway.", ephemeral=True)
+
+        await interaction.response.send_message("You have successfully entered the giveaway!", ephemeral=True)
+
+    @discord.ui.button(
+        label="Participants",
+        style=discord.ButtonStyle.gray,
+        custom_id="persistent_giveaway_list"
+    )
+    async def list_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        footer_text = interaction.message.embeds[0].footer.text
+        giveaway_id = int(footer_text.split(": ")[1])
+
+        async with self.cog.acquire_db() as db:
+            async with db.execute(
+                "SELECT user_id FROM giveaway_participants WHERE giveaway_id = ?",
+                    (giveaway_id)
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        participants = [r[0] for r in rows]
+        prize = interaction.message.embeds[0].title
+
+        view = ParticipantPaginator(participants, prize)
+        await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
+
 class Giveaways(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -283,6 +368,7 @@ class Giveaways(commands.Cog):
     async def cog_load(self):
         await self.init_pools()
         await self.init_db()
+        self.bot.add_view(GiveawayJoinView(self))
 
     async def cog_unload(self):
         self.check_giveaways.cancel()
