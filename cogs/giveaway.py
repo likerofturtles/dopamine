@@ -604,3 +604,45 @@ class Giveaways(commands.Cog):
                              ))
             await db.commit()
         return giveaway_id
+
+    giveaway = app_commands.Group(name="giveaway", description="Commands for Dopamine's giveaway features.")
+
+    @giveaway.command(name="create", description="Start the giveaway creation process.")
+    @app_commands.describe(
+        prize="What is being given away",
+        duration="How long the giveaway should last (eg. 6d, 7h, 6m, 7mon)",
+        winners="The number of winners of the giveaway"
+    )
+    async def giveaway_create(
+        self,
+        interaction: discord.Interaction,
+        prize: str, duration: str,
+        winners: app_commands.Range[int, 1, 50]
+    ):
+        seconds = get_duration_to_seconds(duration)
+        if seconds <= 0:
+            return await interaction.response.send_message('Invalid duration format! Use things like "6d", "7h", or "21m".', ephemeral=True)
+
+        end_timestamp = get_now_plus_seconds_unix(seconds)
+
+        draft = GiveawayDraft(
+            guild_id=interaction.guild.id,
+            channel_id=interaction.channel.id,
+            prize=prize,
+            winners=winners,
+            end_time=end_timestamp
+        )
+
+        embed = self.create_giveaway_embed(draft)
+
+        view = GiveawayPreviewView(self, draft)
+
+        expires = get_now_plus_seconds_unix(900)
+
+        await interaction.response.send_message(
+            content=f"This is a preview of your giveaway. Configure it using the buttons below, then start it.\nThis preview expires **<t:{expires}:R>**!",
+            embed=embed,
+            view=view
+        )
+
+        view.message = await interaction.response.original_response()
