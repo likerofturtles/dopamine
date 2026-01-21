@@ -139,9 +139,9 @@ class BehaviorSelect(discord.ui.Select):
 
         super().__init__(placeholder="Choose role requirement behaviour...", options=options)
 
-        async def callback(self, interaction: discord.Interaction):
-            self.draft.required_behaviour = int(self.values[0])
-            await interaction.response.send_message("Role requirement behaviour updated successfully!", ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        self.draft.required_behaviour = int(self.values[0])
+        await interaction.response.send_message("Role requirement behaviour updated successfully!", ephemeral=True)
 
 class GiveawayPreviewView(discord.ui.View):
     def __init__(self, cog, draft: GiveawayDraft):
