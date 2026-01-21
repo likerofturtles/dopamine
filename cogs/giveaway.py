@@ -49,26 +49,41 @@ class GiveawayEditSelect(discord.ui.Select):
         ]
         super().__init__(placeholder="Select a setting to customize...", options=options)
 
-    async def callback(self, interaction: discord.Interaction):
-        value = self.values[0]
+    async def callback(self, interaction: discord.Interaction, value: str):
         if value in ["image", "thumbnail", "color"]:
             await interaction.response.send_modal(GiveawayVisualsModal(value, self.draft))
-
         elif value == "behavior":
-            view = discord.ui.View()
-            view.add_item(BehaviorSelect(self.draft))
-            await interaction.response.send_message("Choose behavior:", view=view, ephemeral=True)
-
+            new_view = discord.ui.View()
+            new_view.add_item(BehaviorSelect(self.draft))
+            await interaction.response.send_message("Change required role behaviour:", view=new_view, ephemeral=True)
+        elif value == "extra":
+            new_view = discord.ui.View()
+            trait = "extra entries role"
+            new_view.add_item(RoleSelectView(trait, self.draft))
+            await interaction.response.send_message("Choose roles which will give extra entries:", view=new_view,
+                                                    ephemeral=True)
+        elif value == "required":
+            new_view = discord.ui.View()
+            trait = "Required Roles"
+            new_view.add_item(RoleSelectView(trait, self.draft))
+            await interaction.response.send_message("Choose required roles to participate:", view=new_view,
+                                                    ephemeral=True)
+        elif value == "winner_role":
+            new_view = discord.ui.View()
+            trait = "Winners' Role"
+            new_view.add_item(WinnerRoleSelectView(trait, self.draft))
+            await interaction.response.send_message("Choose role to be given to winner(s):", view=new_view,
+                                                    ephemeral=True)
+        elif value == "blacklist":
+            new_view = discord.ui.View()
+            trait = "Blacklisted Roles"
+            new_view.add_item(RoleSelectView(trait, self.draft))
+            await interaction.response.send_message("Choose roles that can't participate:", view=new_view,
+                                                    ephemeral=True)
         elif value == "host":
-            view = MemberSelectView(self.draft)
-            await interaction.response.send_message("Select host:", view=view, ephemeral=True)
-
-        elif value in ["extra", "required", "blacklist", "winner_role"]:
-            # Map values to traits for the RoleSelectView
-            trait_map = {"extra": "Extra Entries", "required": "Required Roles",
-                         "blacklist": "Blacklisted Roles", "winner_role": "Winner Role"}
-            view = RoleSelectView(value, trait_map[value], self.draft)
-            await interaction.response.send_message(f"Select {trait_map[value]}:", view=view, ephemeral=True)
+            new_view = discord.ui.View()
+            new_view.add_item(MemberSelectView(self.draft))
+            await interaction.response.send_message("Choose the host for this giveaway:", view=new_view, ephemeral=True)
 
 class GiveawayVisualsModal(discord.ui.Modal):
     def __init__(self, trait: str, draft: GiveawayDraft):
@@ -251,47 +266,7 @@ class WinnerRoleSelectView(discord.ui.View):
 
         await interaction.response.send_message(f"Updated {self.key} successfully!", ephemeral=True)
 
-class GiveawayEditView(discord.ui.View):
-    def __init__(self, cog, draft: GiveawayDraft, parent_view: GiveawayPreviewView):
-        super().__init__()
-        self.cog = cog
-        self.draft = draft
-        self.parent_view = parent_view
 
-        self.select_menu = GiveawayEditSelect()
-        self.add_item(self.select_menu)
-
-        async def handle_selection(self, interaction: discord.Interaction, value: str):
-            if value in ["image", "thumbnail", "color"]:
-                await interaction.response.send_modal(GiveawayVisualsModal(value, self.draft))
-            elif value == "behavior":
-                new_view = discord.ui.View()
-                new_view.add_item(BehaviorSelect(self.draft))
-                await interaction.response.send_message("Change required role behaviour:", view=new_view, ephemeral=True)
-            elif value == "extra":
-                new_view = discord.ui.View()
-                trait = "extra entries role"
-                new_view.add_item(RoleSelectView(trait, self.draft))
-                await interaction.response.send_message("Choose roles which will give extra entries:", view=new_view, ephemeral=True)
-            elif value == "required":
-                new_view = discord.ui.View()
-                trait = "Required Roles"
-                new_view.add_item(RoleSelectView(trait, self.draft))
-                await interaction.response.send_message("Choose required roles to participate:", view=new_view, ephemeral=True)
-            elif value == "winner_role":
-                new_view = discord.ui.View()
-                trait = "Winners' Role"
-                new_view.add_item(WinnerRoleSelectView(trait, self.draft))
-                await interaction.response.send_message("Choose role to be given to winner(s):", view=new_view, ephemeral=True)
-            elif value == "blacklist":
-                new_view = discord.ui.View()
-                trait = "Blacklisted Roles"
-                new_view.add_item(RoleSelectView(trait, self.draft))
-                await interaction.response.send_message("Choose roles that can't participate:", view=new_view, ephemeral=True)
-            elif value == "host":
-                new_view = discord.ui.View()
-                new_view.add_item(MemberSelectView(self.draft))
-                await interaction.response.send_message("Choose the host for this giveaway:", view=new_view, ephemeral=True)
 
 class GiveawayJoinView(discord.ui.View):
     def __init__(self, cog):
@@ -589,7 +564,8 @@ class Giveaways(commands.Cog):
     async def mark_as_ended(self, giveaway_id: int, guild_id: int):
         if giveaway_id in self.giveaway_cache:
             self.giveaway_cache[giveaway_id]['ended'] = 1
-
+        if giveaway_id in self.participant_cache:
+            self.participant_cache.pop(giveaway_id, None)
         async with self.acquire_db() as db:
             await db.execute("UPDATE giveaways SET ended = 1 WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, guild_id))
             await db.commit()
