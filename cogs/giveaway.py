@@ -569,7 +569,7 @@ class Giveaways(commands.Cog):
         if channel:
             try:
                 msg = await channel.fetch_message(g['message_id'])
-                embed_embed = self.create_embed_from_db(g, winners=winners)
+                embed_embed = self.create_embed_from_cache(g, winners=winners)
                 await msg.edit(embed=embed_embed, view=None)
 
                 mention_str = ", ".join([f"<@{w}>" for w in winners])
@@ -594,10 +594,8 @@ class Giveaways(commands.Cog):
             await db.execute("UPDATE giveaways SET ended = 1 WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, guild_id))
             await db.commit()
 
-    def create_embed_from_db(self, row, winners=None):
-        prize = row[4]
-        end_ts = row[6]
-        color_str = row[15] or "Blue"
+    def create_embed_from_cache(self, row, winners=None):
+        end_ts = row['end_time']
 
         embed = discord.Embed(
             title="GIVEAWAY ENDED",
