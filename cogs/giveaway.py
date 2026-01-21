@@ -548,9 +548,15 @@ class Giveaways(commands.Cog):
             return
 
         winner_count = min(len(pool), g['winner_count'])
-        unique_pool = list(set(pool))
-        weights = [pool.count(uid) for uid in unique_pool]
-        winners = random.choices(unique_pool, weights=weights, k=winner_count)
+        random.shuffle(pool)
+
+        winners = []
+        for winner_id in pool:
+            if winner_id not in winners:
+                winners.append(winner_id)
+
+            if len(winners) == winner_count:
+                break
 
         await self.mark_as_ended(giveaway_id, guild_id)
         async with self.acquire_db() as db:
@@ -613,7 +619,10 @@ class Giveaways(commands.Cog):
                     if draft.color.startswith("#"):
                         embed_color = discord.Color.from_str(draft.color)
                     else:
-                        embed_color = getattr(discord.Color, draft.color.lower())()
+                        try:
+                            embed_color = getattr(discord.Color, draft.color.lower())()
+                        except (AttributeError, ValueError, Exception):
+                            pass
                 except (ValueError, AttributeError):
                     pass
 
