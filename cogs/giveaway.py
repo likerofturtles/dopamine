@@ -608,23 +608,18 @@ class Giveaways(commands.Cog):
         return embed
 
     def create_giveaway_embed(self, draft: GiveawayDraft, ended: bool = False):
-        if ended:
-            embed_color = discord.Color.red()
-            title_text = "GIVEAWAY ENDED"
-        else:
-            embed_color = discord.Color.blue()
-            title_text = f"{draft.prize}"
-            if draft.color:
-                try:
-                    if draft.color.startswith("#"):
-                        embed_color = discord.Color.from_str(draft.color)
-                    else:
-                        try:
-                            embed_color = getattr(discord.Color, draft.color.lower())()
-                        except (AttributeError, ValueError, Exception):
-                            pass
-                except (ValueError, AttributeError):
-                    pass
+        title_text = "GIVEAWAY ENDED" if ended else f"{draft.prize}"
+        embed_color = discord.Color.red() if ended else discord.Color.blue()
+
+        if not ended and draft.color:
+            color_str = draft.color.lower()
+            try:
+                if color_str.startswith("#"):
+                    embed_color = discord.Color.from_str(color_str)
+                elif hasattr(discord.Color, color_str):
+                    embed_color = getattr(discord.Color, color_str)()
+            except (ValueError, TypeError):
+                pass
 
         embed = discord.Embed(
             title=f"{title_text}",
