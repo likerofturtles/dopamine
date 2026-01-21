@@ -374,10 +374,10 @@ class GiveawayJoinView(discord.ui.View):
 
 class DestructiveConfirmationView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)
+        super().__init__(timeout=60)
         self.value = None
 
-    @discord.ui.button(label="No", style=discord.ButtonStyle.grey)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
     async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = False
         self.stop()
@@ -389,15 +389,15 @@ class DestructiveConfirmationView(discord.ui.View):
 
 class ConfirmationView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)
+        super().__init__(timeout=60)
         self.value = None
 
-    @discord.ui.button(label="No", style=discord.ButtonStyle.grey)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
     async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = False
         self.stop()
 
-    @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green)
     async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = True
         self.stop()
@@ -800,11 +800,9 @@ class Giveaways(commands.Cog):
         if giveaway_id not in self.giveaway_cache:
             return await interaction.response.send_message("That giveaway is not active or doesn't exist!", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
-
 
         view = ConfirmationView(self)
-        await interaction.edit_original_response(embed=discord.Embed(title="Pending Confirmation", description="Are you sure you want to end this giveaway right now and announce the winners?", view=view, colour=discord.Colour(0x000000)))
+        await interaction.response.send_message(embed=discord.Embed(title="Pending Confirmation", description="Are you sure you want to end this giveaway right now and announce the winners?", view=view, colour=discord.Colour(0x000000)))
         await view.wait()
 
         if view.value is None:
@@ -820,3 +818,37 @@ class Giveaways(commands.Cog):
     @giveaway_end.autocomplete("giveaway_id")
     async def end_autocomplete(self, interaction: discord.Interaction, current: str):
         return await self.giveaway_autocomplete(interaction, current, magic=True)
+
+    @giveaway.command(name="delete", description="Delete a giveaway permanently from the database.")
+    @app_commands.describe(giveaway_id="The ID of the giveaway to delete.")
+    async def giveaway_delete(self, interaction: discord.Interaction, giveaway_id: str):
+        try:
+            giveaway_id = int(giveaway_id)
+        except ValueError:
+            return await interaction.response.send_message("That is not a valid ID!", ephemeral=True)
+
+        async with self.acquire_db() as db:
+            prize = await db.execute("SELECT prize FROM giveaways WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, interaction.guild.id))
+            async with db.execute("SELECT channel_id, message_id, prize FROM giveaways WHERE giveaway_id = ? AND guild_id = ?", (giveaway_id, interaction.guild.id)) as cursor:
+                row = await cursor.fetchone()
+
+            if not row:
+                return await interaction.response.send_message("Giveaway not found.", ephemeral=True)
+
+            view = DestructiveConfirmationView(self)
+            await interaction.response.send_message(embed=discord.Embed(title="Pending Confirmation", description=f"Are you sure you want to delete the giveaway for **{prize}** (ID: {giveaway_id}) permanently?", view=view, colour=discord.Colour(0x000000)))
+            await view.wait()
+
+            if view.value is None:
+                await interaction.edit_original_response(embed=discord.Embed(title="Timed Out", description=f"~~Are you sure you want to delete the giveaway for **{prize}** (ID: {giveaway_id}) permanently?~~", colour=discord.Colour.red()))
+
+            elif view.value is True:
+                async with self.acquire_db() as db:
+                    await db.execute("DELETE FROM giveaways WHERE giveaway_id = ?", (giveaway_id,))
+                    await db.execute("DELETE FROM giveaway_participants WHERE giveaway_id = ?", (giveaway_id,))
+                    await db.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ?", (giveaway_id,))
+                    await db.commit()
+                await interaction.edit_original_response(embed=discord.Embed(title="Action Confirmed", description=f"~~Are you sure you want to delete the giveaway for **{prize}** (ID: {giveaway_id}) permanently?~~", colour=discord.Colour.green()))
+
+            else:
+                await interaction.edit_original_response(embed=discord.Embed(title="Action Canceled", description=f"~~Are you sure you want to delete the giveaway for **{prize}** (ID: {giveaway_id}) permanently?~~", colour=discord.Colour.red()))
