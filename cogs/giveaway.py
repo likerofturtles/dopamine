@@ -296,6 +296,7 @@ class GiveawayEditView(discord.ui.View):
 class GiveawayJoinView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
+        self.cog = cog
 
     @discord.ui.button(
         emoji="🎉",
@@ -305,55 +306,52 @@ class GiveawayJoinView(discord.ui.View):
     )
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.message.embeds:
-            return
+            return await interaction.response.send_message("Uh-oh! I'm afraid that the message you interacted with doesn't exist anymore :3", ephemeral=True)
 
         footer_text = interaction.message.embeds[0].footer.text
         try:
             giveaway_id = int(footer_text.split(": ")[1])
         except (IndexError, ValueError):
-            return await interaction.response.send_message("Could not find Giveaway ID.", ephemeral=True)
+            return await interaction.response.send_message("Uh-oh! I couldn't find the Giveaway ID. Perhaps try again?", ephemeral=True)
 
-        async with self.cog.acquire_db() as db:
-            async with db.execute(
-                "SELECT * FROM giveaways WHERE giveaway_id = ? AND guild_id = ?",
-                    (giveaway_id, interaction.guild_id)
-            ) as cursor:
-                g = await cursor.fetchone()
+        g = self.cog.giveaway_cache.get[giveaway_id]
 
-        if not g or g[16] == 1:
-            return await interaction.response.send_message("This giveaway has already ended!", ephemeral=True)
+        if not g or g['ended'] == 1:
+            return await interaction.response.send_message("Uh-oh! I'm afraid that this giveaway has already ended!", ephemeral=True)
 
-        if g[10]:
-            blacklisted_ids = [int(r) for r in g[10].split(",")]
+        if g['blacklisted_roles']:
+            blacklisted_ids = [int(r) for r in g['blacklisted_roles'].split(",")]
             if any(role.id in blacklisted_ids for role in interaction.user.roles):
-                return await interaction.response.send_message("You cannot join this giveaway because you have a blacklisted role.", ephemeral=True)
+                return await interaction.response.send_message("Uh-oh! You cannot join this giveaway because you have a blacklisted role.", ephemeral=True)
 
-        if g[8]:
-            req_ids = [int(r) for r in g[8].split(",")]
+        if g['required_roles']:
+            req_ids = [int(r) for r in g['required_roles'].split(",")]
             user_role_ids = [role.id for role in interaction.user.roles]
 
-            if g[9] == 0:
+            if g['req_behaviour'] == 0:
                 if not all(r in user_role_ids for r in req_ids):
-                    return await interaction.response.send_message("You cannot join this giveaway because you don't have all the required roles.", ephemeral=True)
+                    return await interaction.response.send_message("Uh-oh! You cannot join this giveaway because you don't have all the required roles.", ephemeral=True)
 
             else:
                 if not any(r in user_role_ids for r in req_ids):
-                    return await interaction.response.send_message("You cannot join this giveaway because you don't have one of the required roles.", ephemeral=True)
+                    return await interaction.response.send_message("Uh-oh! You cannot join this giveaway because you don't have one of the required roles.", ephemeral=True)
+
+        participants = self.cog.participant_cache.get(giveaway_id, set())
 
         async with self.cog.acquire_db() as db:
-            async with db.execute(
-                "SELECT 1 FROM giveaway_participants WHERE giveaway_id = ? AND user_id = ?",
-                    (giveaway_id, interaction.user.id)
-            ) as cursor:
-                if await cursor.fetchone():
-                    await db.execute(
-                        "DELETE FROM giveaway_participants WHERE giveaway_id = ? AND user_id = ?",
-                        (giveaway_id, interaction.user.id)
-                    )
-                    await db.commit()
-                    return await interaction.response.send_message("You have successfully left the giveaway.", ephemeral=True)
+            if interaction.user.id in participants:
+                participants.remove(interaction.user.id)
+                await db.execute("DELETE FROM giveaway_participants WHERE giveaway_id = ? AND user_id = ?",
+                                 (giveaway_id, interaction.user.id))
+                msg = "You have successfully left the giveaway."
+            else:
+                participants.add(interaction.user.id)
+                await db.execute("INSERT INTO giveaway_participants (guild_id, giveaway_id, user_id) VALUES (?, ?, ?)",
+                                 (interaction.guild_id, giveaway_id, interaction.user.id))
+                msg = "🎉 You have successfully entered the giveaway!"
+            await db.commit()
 
-        await interaction.response.send_message("🎉 You have successfully entered the giveaway!", ephemeral=True)
+        await interaction.response.send_message(msg, ephemeral=True)
 
     @discord.ui.button(
         label="Participants",
