@@ -171,7 +171,6 @@ class GiveawayPreviewView(discord.ui.View):
         self.cog = cog
         self.draft = draft
         self.message = Optional[discord.InteractionMessage]
-        self.parent_view.draft = self.draft
 
     async def on_timeout(self):
         if self.message:
