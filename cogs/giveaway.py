@@ -372,6 +372,36 @@ class GiveawayJoinView(discord.ui.View):
         view = ParticipantPaginator(participants, prize)
         await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
+class DestructiveConfirmationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.value = None
+
+    @discord.ui.button(label="No", style=discord.ButtonStyle.grey)
+    async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+
+    @discord.ui.button(label="Delete Permanently", style=discord.ButtonStyle.red)
+    async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+
+class ConfirmationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.value = None
+
+    @discord.ui.button(label="No", style=discord.ButtonStyle.grey)
+    async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+    async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+
 class Giveaways(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -772,8 +802,20 @@ class Giveaways(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        await self.end_giveaway(giveaway_id, interaction.guild_id)
-        await interaction.edit_original_response(content=f"Giveaway for **{self.giveaway_cache(giveaway_id)['prize']}** has been ended successfully.", ephemeral=True)
+
+        view = ConfirmationView(self)
+        await interaction.edit_original_response(embed=discord.Embed(title="Pending Confirmation", description="Are you sure you want to end this giveaway right now and announce the winners?", view=view, colour=discord.Colour(0x000000)))
+        await view.wait()
+
+        if view.value is None:
+            await interaction.edit_original_response(embed=discord.Embed(title="Timed Out", description="~~Are you sure you want to end this giveaway right now and announce the winners?~~", colour=discord.Colour.red()))
+
+        elif view.value is True:
+            await self.end_giveaway(giveaway_id, interaction.guild_id)
+            await interaction.edit_original_response(embed=discord.Embed(title="Action Confirmed", description="~~Are you sure you want to end this giveaway right now and announce the winners?~~", colour=discord.Colour.green()))
+
+        else:
+            await interaction.edit_original_response(embed=discord.Embed(title="Action Canceled", description="~~Are you sure you want to end this giveaway right now and announce the winners?~~", colour=discord.Colour.red()))
 
     @giveaway_end.autocomplete("giveaway_id")
     async def end_autocomplete(self, interaction: discord.Interaction, current: str):
