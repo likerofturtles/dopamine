@@ -59,25 +59,25 @@ class GiveawayEditSelect(discord.ui.Select):
         elif value == "extra":
             new_view = discord.ui.View()
             trait = "extra entries role"
-            new_view.add_item(RoleSelectView(trait, self.draft))
+            new_view.add_item(RoleSelectView("extra", "Extra Entry Roles", self.draft))
             await interaction.response.send_message("Choose roles which will give extra entries:", view=new_view,
                                                     ephemeral=True)
         elif value == "required":
             new_view = discord.ui.View()
             trait = "Required Roles"
-            new_view.add_item(RoleSelectView(trait, self.draft))
+            new_view.add_item(RoleSelectView("required", "Required Roles", self.draft))
             await interaction.response.send_message("Choose required roles to participate:", view=new_view,
                                                     ephemeral=True)
         elif value == "winner_role":
             new_view = discord.ui.View()
             trait = "Winners' Role"
-            new_view.add_item(WinnerRoleSelectView(trait, self.draft))
+            new_view.add_item(WinnerRoleSelectView("winner_role","Winner Role", self.draft))
             await interaction.response.send_message("Choose role to be given to winner(s):", view=new_view,
                                                     ephemeral=True)
         elif value == "blacklist":
             new_view = discord.ui.View()
             trait = "Blacklisted Roles"
-            new_view.add_item(RoleSelectView(trait, self.draft))
+            new_view.add_item(RoleSelectView("blacklist", "Blacklisted Roles", self.draft))
             await interaction.response.send_message("Choose roles that can't participate:", view=new_view,
                                                     ephemeral=True)
         elif value == "host":
