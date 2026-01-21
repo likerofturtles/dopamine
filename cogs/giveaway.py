@@ -494,8 +494,8 @@ class Giveaways(commands.Cog):
                     self.giveaway_cache[giveaway_id] = g
         if g.get('ended') == 1:
             return
-
-        await self.mark_as_ended(giveaway_id, guild_id)
+        whichone = "giveaway_cache"
+        await self.mark_as_ended(giveaway_id, guild_id, whichone)
 
         raw_participants = list(self.participant_cache.get(giveaway_id, set()))
 
@@ -549,6 +549,8 @@ class Giveaways(commands.Cog):
                     winner_data
                 )
                 await db.commit()
+        whichone = "participant_cache" # Why separately? because we still need participant cache until this point. however, if we delay giveaway cache until here, the complex winner calculations can take time and the task loop check_giveaways may be triggered a second time, which won't be good!
+        await self.mark_as_ended(giveaway_id, guild_id, whichone)
 
         guild = self.bot.get_guild(guild_id)
         channel = guild.get_channel(g['channel_id']) if guild else None
@@ -572,14 +574,16 @@ class Giveaways(commands.Cog):
             except Exception:
                     pass
 
-    async def mark_as_ended(self, giveaway_id: int, guild_id: int):
-        if giveaway_id in self.giveaway_cache:
-            self.giveaway_cache[giveaway_id]['ended'] = 1
-        if giveaway_id in self.participant_cache:
-            self.participant_cache.pop(giveaway_id, None)
-        async with self.acquire_db() as db:
-            await db.execute("UPDATE giveaways SET ended = 1 WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, guild_id))
-            await db.commit()
+    async def mark_as_ended(self, giveaway_id: int, guild_id: int, whichone: str):
+        if whichone == 'giveaway_cache':
+            if giveaway_id in self.giveaway_cache:
+                self.giveaway_cache[giveaway_id]['ended'] = 1
+            async with self.acquire_db() as db:
+                await db.execute("UPDATE giveaways SET ended = 1 WHERE giveaway_id = ? and guild_id = ?", (giveaway_id, guild_id))
+                await db.commit()
+        if whichone == 'participant_cache':
+            if giveaway_id in self.participant_cache:
+                self.participant_cache.pop(giveaway_id, None)
 
     def create_embed_from_cache(self, row, winners=None):
         end_ts = row['end_time']
