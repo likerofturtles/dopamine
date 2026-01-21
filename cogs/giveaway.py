@@ -51,21 +51,21 @@ class GiveawayEditSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction, value: str):
         if value in ["image", "thumbnail", "color"]:
-            await interaction.response.send_modal(GiveawayVisualsModal(value, self.draft))
+            await interaction.response.send_modal(GiveawayVisualsModal(value, self.draft, self.parent_view))
         elif value == "behavior":
             new_view = discord.ui.View()
-            new_view.add_item(BehaviorSelect(self.draft))
+            new_view.add_item(BehaviorSelect(self.draft, self.parent_view))
             await interaction.response.send_message("Change required role behaviour:", view=new_view, ephemeral=True)
         elif value == "extra":
             new_view = discord.ui.View()
             trait = "extra entries role"
-            new_view.add_item(RoleSelectView("extra", "Extra Entry Roles", self.draft))
+            new_view.add_item(RoleSelectView("extra", "Extra Entry Roles", self.draft, self.parent_view))
             await interaction.response.send_message("Choose roles which will give extra entries:", view=new_view,
                                                     ephemeral=True)
         elif value == "required":
             new_view = discord.ui.View()
             trait = "Required Roles"
-            new_view.add_item(RoleSelectView("required", "Required Roles", self.draft))
+            new_view.add_item(RoleSelectView("required", "Required Roles", self.draft, self.parent_view))
             await interaction.response.send_message("Choose required roles to participate:", view=new_view,
                                                     ephemeral=True)
         elif value == "winner_role":
@@ -77,19 +77,20 @@ class GiveawayEditSelect(discord.ui.Select):
         elif value == "blacklist":
             new_view = discord.ui.View()
             trait = "Blacklisted Roles"
-            new_view.add_item(RoleSelectView("blacklist", "Blacklisted Roles", self.draft))
+            new_view.add_item(RoleSelectView("blacklist", "Blacklisted Roles", self.draft, self.parent_view))
             await interaction.response.send_message("Choose roles that can't participate:", view=new_view,
                                                     ephemeral=True)
         elif value == "host":
             new_view = discord.ui.View()
-            new_view.add_item(MemberSelectView(self.draft))
+            new_view.add_item(MemberSelectView(self.draft, self.parent_view))
             await interaction.response.send_message("Choose the host for this giveaway:", view=new_view, ephemeral=True)
 
 class GiveawayVisualsModal(discord.ui.Modal):
-    def __init__(self, trait: str, draft: GiveawayDraft):
+    def __init__(self, trait: str, draft: GiveawayDraft, parent_view):
         super().__init__(title=f"Edit Giveaway {trait.title()}")
         self.trait = trait
         self.draft = draft
+        self.parent_view = parent_view
         self.input_field = discord.ui.TextInput(
             label=f"Enter {trait}",
             placeholder="Type here...",
@@ -105,6 +106,9 @@ class GiveawayVisualsModal(discord.ui.Modal):
             self.draft.thumbnail = value
         elif self.trait == "color":
             self.draft.color = value
+
+        new_embed = self.parent_view.cog.create_giveaway_embed(self.draft)
+        await self.parent_view.message.edit(embed=new_embed)
 
         await interaction.response.send_message(f"Updated **{self.trait}** successfully!", ephemeral=True)
 
@@ -146,16 +150,19 @@ class ParticipantPaginator(discord.ui.View):
             await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 class BehaviorSelect(discord.ui.Select):
-    def __init__(self, draft: GiveawayDraft):
+    def __init__(self, draft: GiveawayDraft, parent_view):
         options = [
             discord.SelectOption(label="All required roles", value="0", description="Participant must have every role listed."),
             discord.SelectOption(label="One of the required roles", value="1", description="Participant must have at least one role listed.")
         ]
 
         super().__init__(placeholder="Choose role requirement behaviour...", options=options)
+        self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
         self.draft.required_behaviour = int(self.values[0])
+        new_embed = self.parent_view.cog.create_giveaway_embed(self.draft)
+        await self.parent_view.message.edit(embed=new_embed)
         await interaction.response.send_message("Role requirement behaviour updated successfully!", ephemeral=True)
 
 class GiveawayPreviewView(discord.ui.View):
@@ -169,7 +176,7 @@ class GiveawayPreviewView(discord.ui.View):
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(view=None)
+                await self.message.edit(title="Giveaway preview expired", descrption="This giveaway preview has expired.", view=None, colour=discord.Colour.red())
             except discord.HTTPException:
                 pass
 
@@ -213,23 +220,27 @@ class GiveawayPreviewView(discord.ui.View):
         self.stop()
 
 class MemberSelectView(discord.ui.View):
-    def __init__(self, draft: GiveawayDraft):
+    def __init__(self, draft: GiveawayDraft, parent_view):
         super().__init__(timeout=300)
         self.draft = draft
+        self.parent_view = parent_view
         self.select = discord.ui.UserSelect(placeholder="Pick a host...", min_values=1, max_values=1)
         self.select.callback = self.callback
         self.add_item(self.select)
 
     async def callback(self, interaction: discord.Interaction):
         self.draft.host_id = self.select.values[0].id
+        new_embed = self.parent_view.cog.create_giveaway_embed(self.draft)
+        await self.parent_view.message.edit(embed=new_embed)
         await interaction.response.send_message(f"Giveaway host updated to {self.select.values[0].mention}", ephemeral=True)
 
 
 class RoleSelectView(discord.ui.View):
-    def __init__(self, key: str, label: str, draft: GiveawayDraft):
+    def __init__(self, key: str, label: str, draft: GiveawayDraft, parent_view):
         super().__init__(timeout=300)
         self.key = key
         self.draft = draft
+        self.parent_view = parent_view
         self.select = discord.ui.RoleSelect(placeholder=f"Pick {label}...", min_values=1, max_values=10)
         self.select.callback = self.callback
         self.add_item(self.select)
@@ -244,6 +255,9 @@ class RoleSelectView(discord.ui.View):
             self.draft.blacklisted_roles = role_ids
         elif self.key == "winner_role":
             self.draft.winner_role = role_ids[0]
+
+        new_embed = self.parent_view.cog.create_giveaway_embed(self.draft)
+        await self.parent_view.message.edit(embed=new_embed)
 
         await interaction.response.send_message(f"Updated {self.key} successfully!", ephemeral=True)
 
