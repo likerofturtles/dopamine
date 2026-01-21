@@ -537,10 +537,14 @@ class Giveaways(commands.Cog):
 
             if len(winners) == winner_count:
                 break
-        async with self.acquire_db() as db:
-            for winner_id in winners:
-                await db.execute("INSERT INTO giveaway_winners (giveaway_id, user_id) VALUES (?, ?)",
-                                 (giveaway_id, winner_id))
+        winner_data = [(giveaway_id, winner_id) for winner_id in winners]
+
+        if winner_data:
+            async with self.acquire_db() as db:
+                await db.executemany(
+                    "INSERT INTO giveaway_winners (giveaway_id, user_id) VALUES (?, ?)",
+                    winner_data
+                )
                 await db.commit()
 
         guild = self.bot.get_guild(guild_id)
