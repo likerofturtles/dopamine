@@ -1301,98 +1301,44 @@ async def avatar(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(embed=embed)
 
 
-@bot.command(name="purge")
-@mod_check()
-@commands.has_permissions(manage_messages=True)
-async def purge(ctx, number: int):
-    """!!purge <number> -> deletes <number> messages (max 14 days old)"""
-
-    # 1. API Limit Check (Maximum 100 messages)
-
-    # Using slightly less than 14 days (e.g. 13 days, 23 hours) is safer
-    cutoff = discord.utils.utcnow() - datetime.timedelta(days=13, hours=23)
-
-    # Delete the command message itself first
-    try:
-        await ctx.message.delete()
-    except discord.NotFound:
-        pass
-
-    # 2. Purge the messages
-    deleted = await ctx.channel.purge(limit=number, after=cutoff)
-
-    # 3. Log the action
-    log_ch = await get_log_channel(ctx.guild)
-    if log_ch:
-        log_description = f"**{len(deleted)}** message(s) have been purged in <#{ctx.channel.id}>."
-        log_embed = discord.Embed(
-            description=log_description,
-            color=discord.Color.red()
-        )
-        log_embed.set_footer(text=f"by {ctx.author}", icon_url=ctx.author.display_avatar.url)
-        await log_ch.send(embed=log_embed)
-
-    # 4. Success/Feedback Response (Self-deleting after 5 seconds)
-    if len(deleted) == 0:
-        # Check if the purge was requested but nothing was deleted due to age
-        error_embed = discord.Embed(
-            description=f"Unable to purge messages older than 14 days (Discord API limit).",
-            color=discord.Color.red()
-        )
-        feedback_message = await ctx.send(embed=error_embed)
-    else:
-        # All requested messages were deleted
-        feedback_embed = discord.Embed(
-            description=f"Purged **{len(deleted)}** message(s).",
-            color=discord.Color.green()
-        )
-        feedback_message = await ctx.send(embed=feedback_embed)
-
-    # Delete the feedback message after 5 seconds
-    await feedback_message.delete(delay=5)
-
-
-@bot.tree.command(name="purge", description="Delete recent messages (max 14 days old).")
+bot.tree.command(name="purge", description="Delete recent messages.")
 @app_commands.check(slash_mod_check)
 @app_commands.checks.has_permissions(manage_messages=True)
 @app_commands.describe(number="Number of messages to delete (max 100)")
 async def purge_slash(interaction: discord.Interaction, number: int):
-    # 1. API Limit Check (Maximum 100 messages)
+    number = max(1, min(number, 100))
 
-    # Defer the response immediately and make it ephemeral
     await interaction.response.defer(ephemeral=True)
 
-    # Using slightly less than 14 days (e.g. 13 days, 23 hours) is safer
-    cutoff = discord.utils.utcnow() - datetime.timedelta(days=13, hours=23)
+    try:
 
-    # 2. Purge the messages
-    deleted = await interaction.channel.purge(limit=number, after=cutoff)
+        messages = [msg async for msg in interaction.channel.history(limit=number)]
 
-    # 3. Log the action
+        if not messages:
+            return await interaction.followup.send("No messages found to delete.", ephemeral=True)
+
+        await interaction.channel.delete_messages(messages)
+        deleted_count = len(messages)
+
+    except discord.Forbidden:
+        return await interaction.followup.send("I don't have permission to delete messages here.", ephemeral=True)
+    except discord.HTTPException as e:
+        if e.code == 50034:
+            return await interaction.followup.send(
+                "Cannot delete messages older than 14 days using bulk delete.",
+                ephemeral=True
+            )
+        return await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
     log_ch = await get_log_channel(interaction.guild)
     if log_ch:
         log_embed = discord.Embed(
-            description=f"**{len(deleted)}** message(s) have been purged in <#{interaction.channel.id}>.",
+            description=f"**{deleted_count}** message(s) purged in {interaction.channel.mention}.",
             color=discord.Color.red()
         )
-        log_embed.set_footer(text=f"by {interaction.user}", icon_url=interaction.user.display_avatar.url)
+        log_embed.set_footer(text=f"By {interaction.user}", icon_url=interaction.user.display_avatar.url)
         await log_ch.send(embed=log_embed)
 
-    # 4. Feedback Response (Ephemeral)
-    if len(deleted) == 0 and number > 0:
-        # Check if the purge was requested but nothing was deleted due to age
-        feedback_embed = discord.Embed(
-            description=f"Unable to purge messages older than 14 days (Discord API limit).",
-            color=discord.Color.red()
-        )
-        await interaction.followup.send(embed=feedback_embed, ephemeral=True)
-    else:
-        # All requested messages were deleted
-        feedback_embed = discord.Embed(
-            description=f"Purged **{len(deleted)}** message(s).",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=feedback_embed, ephemeral=True)
+    await interaction.followup.send(f"Successfully purged **{deleted_count}** messages.", ephemeral=True)
 
 
 @bot.tree.command(name="fuckoff", description="Is the bot annoying you? Tell it to fuck off and shut itself down using this.")
