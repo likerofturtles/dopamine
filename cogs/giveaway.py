@@ -1006,3 +1006,29 @@ class Giveaways(commands.Cog):
     @giveaway_reroll.autocomplete("giveaway_id")
     async def reroll_autocomplete(self, interaction: discord.Interaction, current: str):
         return await self.giveaway_autocomplete(interaction, current, magic=False)
+
+    @giveaway.command(name="list", description="List all giveaways in this server.")
+    async def giveaway_list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        async with self.acquire_db() as db:
+            async with db.execute("SELECT prize, ended, end_time, giveaway_id FROM giveaways WHERE guild_id = ? ORDER BY giveaway_id ASC", (interaction.guild.id,)) as cursor:
+                rows = await cursor.fetchall()
+
+        if not rows:
+            return await interaction.edit_original_response("No giveaways found for this server.", ephemeral=True)
+
+        lines = []
+        for i, (prize, ended, end_time, giveaway_id) in enumerate(rows, 1):
+            status = "Ended" if ended == 1 else f"Ends **<t:{end_time}:R>**"
+            lines.append(f"{i}. **{prize}**: {status} (`{giveaway_id}`)")
+
+        full_list = "\n".join(lines)
+        if len(full_list) > 1900:
+            full_list = full_list[:1900] + "\n...and more."
+
+        embed = discord.Embed(
+            title=f"All Giveaways for {interaction.guild.name}",
+            description=full_list,
+            color=discord.Color.blue()
+        )
+        await interaction.edit_original_response(embed=embed)
