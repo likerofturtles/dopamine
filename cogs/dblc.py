@@ -274,3 +274,6 @@ class Dblc(commands.cog):
             await message.edit(embed=embed)
         except Exception:
             pass
+
+    async def setup(bot):
+        await bot.add_cog(Dblc(bot))

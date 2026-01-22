@@ -1253,26 +1253,6 @@ async def on_guild_join(guild):
     if target_channel:
         await target_channel.send(embed=embed)
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        permission_error = discord.Embed(
-            description="You don't have the permission to use this command."
-        )
-        await ctx.send(embed=permission_error)
-
-
-    elif isinstance(error, commands.CommandNotFound):
-        pass
-
-    else:
-        logger.exception("Unhandled command error: %s", error)
-        finalerror_embed = discord.Embed(
-            description=(
-            f"An error occurred: {error}"),
-            color=discord.Color.red()
-        )
-
 
 if __name__ == "__main__":
     async def main_async():
