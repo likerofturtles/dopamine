@@ -871,6 +871,10 @@ class Giveaways(commands.Cog):
             else:
                 await interaction.edit_original_response(embed=discord.Embed(title="Action Canceled", description=f"~~Are you sure you want to delete the giveaway for **{prize}** (ID: {giveaway_id}) permanently?~~", colour=discord.Colour.red()))
 
+    @giveaway_delete.autocomplete("giveaway_id")
+    async def delete_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self.giveaway_autocomplete(interaction, current, magic=False)
+
     @giveaway.command(name="reroll", description="Reroll a giveaway.")
     @app_commands.describe(giveaway_id="The ID of the giveaway to reroll.", winners="Number of new winners to pick", preserve_winners="Keep previous winners and just add new ones?")
     async def giveaway_reroll(self, interaction: discord.Interaction, giveaway_id: int, winners: int = 1, preserve_winners: bool = False):
@@ -998,3 +1002,7 @@ class Giveaways(commands.Cog):
                                                                                  f"~~* {'Preserve old winners and their roles' if preserve_winners else f'over-write **{winners}** old winners and remove their winner role'}~~\n"
                                                                                  f"~~{f'* Give **{winners}** the winner role' if g[1] else ''}~~"),
                                                                              colour=discord.Colour.green()))
+
+    @giveaway_reroll.autocomplete("giveaway_id")
+    async def reroll_autocomplete(self, interaction: discord.Interaction, current: str):
+        return await self.giveaway_autocomplete(interaction, current, magic=False)
