@@ -34,7 +34,7 @@ class LoggingManager:
             await self.db_pool.put(conn)
 
     async def init_db(self):
-        async def _run_init():
+        async def run_init():
             async with self.acquire_db() as db:
                 await db.execute('''
                                  CREATE TABLE IF NOT EXISTS log_channels
@@ -48,7 +48,7 @@ class LoggingManager:
                                  )
                                  ''')
 
-        await _run_init()
+        await run_init()
 
     async def populate_cache(self):
         self.log_channel_cache.clear()
