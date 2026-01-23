@@ -53,7 +53,6 @@ LOG_CHANNEL_CACHE_TTL = 300
 WELCOME_CHANNEL_CACHE_TTL = 300
 
 pointvalues_cache: dict[str, tuple[list[int], float]] = {}
-log_channel_cache: dict[int, tuple[int | None, float]] = {}
 welcome_channel_cache: dict[int, tuple[int | None, float]] = {}
 
 
@@ -434,90 +433,6 @@ async def get_pending_perma_for_user_guild(guild_id: str, user_id: str):
         await cursor.close()
         return result
 
-async def init_log_channels_table():
-    async with get_core_db_pool().acquire() as db:
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS log_channels (
-            guild_id INTEGER PRIMARY KEY,
-            channel_id INTEGER
-        )
-        """)
-        await db.commit()
-
-async def db_set_log_channel(guild_id: int, channel_id: int):
-    async with get_core_db_pool().acquire() as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO log_channels(guild_id, channel_id) VALUES (?, ?)",
-            (guild_id, channel_id)
-        )
-        await db.commit()
-    log_channel_cache[guild_id] = (channel_id, time.time() + LOG_CHANNEL_CACHE_TTL)
-
-async def db_get_log_channel(guild_id: int):
-    now = time.time()
-    _cleanup_ttl_cache(log_channel_cache)
-    cached = log_channel_cache.get(guild_id)
-    if cached:
-        channel_id, expires_at = cached
-        if now < expires_at:
-            return channel_id
-        else:
-            log_channel_cache.pop(guild_id, None)
-
-    async with get_core_db_pool().acquire() as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT channel_id FROM log_channels WHERE guild_id = ?", (guild_id,))
-        row = await cursor.fetchone()
-        await cursor.close()
-        channel_id = row["channel_id"] if row else None
-
-    log_channel_cache[guild_id] = (channel_id, now + LOG_CHANNEL_CACHE_TTL)
-    return channel_id
-
-
-@bot.command(name="setlog")
-@mod_check()
-async def setlog(ctx, channel: discord.TextChannel):
-
-    await db_set_log_channel(ctx.guild.id, channel.id)
-
-    channel_id = await db_get_log_channel(ctx.guild.id)
-
-    embed = discord.Embed(
-        title="Log Channel Updated Successfully",
-        description=f"Log channel set to {channel.mention}",
-        color=discord.Color.green()
-    )
-    embed.set_footer(text=f"Set by {ctx.author}", icon_url=ctx.author.display_avatar.url)
-
-    await ctx.send(embed=embed)
-
-@bot.tree.command(name="setlog", description="Set the logging channel for logs.")
-@app_commands.check(slash_mod_check)
-@app_commands.describe(channel="Channel to use for logs")
-async def setlog_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    await db_set_log_channel(interaction.guild.id, channel.id)
-    channel_id = await db_get_log_channel(interaction.guild.id)
-    embed = discord.Embed(
-        title="Log Channel Updated Successfully",
-        description=f"Log channel set to {channel.mention}",
-        color=discord.Color.green()
-    )
-    embed.set_footer(text=f"Set by {interaction.user}", icon_url=interaction.user.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
-
-async def get_log_channel(guild: discord.Guild) -> discord.TextChannel | None:
-    channel_id = await db_get_log_channel(guild.id)
-    if not channel_id:
-        return None
-    channel = guild.get_channel(channel_id)
-    if channel:
-        return channel
-    try:
-        return await guild.fetch_channel(channel_id)
-    except (discord.NotFound, discord.Forbidden):
-        return None
-
 def human_readable_duration(duration: timedelta) -> str:
     total_seconds = int(duration.total_seconds())
     days, remainder = divmod(total_seconds, 86400)
@@ -859,7 +774,6 @@ async def on_ready():
     try:
         await init_core_db()
         await init_values_db()
-        await init_log_channels_table()
         await init_welcome_table()
     except Exception as e:
         print(f"❌ Database init failed: {e}")
@@ -1252,7 +1166,6 @@ if __name__ == "__main__":
         try:
             await init_core_db()
             await init_values_db()
-            await init_log_channels_table()
             await init_welcome_table()
         except Exception as e:
             print(f"Error: Initialization failed: {e}")
