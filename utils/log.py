@@ -78,3 +78,9 @@ class LoggingManager:
             )
             await db.commit()
         self.log_channel_cache[guild_id] = channel_id
+
+    async def log_remove(self, guild_id: int):
+        async with self.acquire_db() as db:
+            await db.execute("DELETE FROM log_channels WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+        self.log_channel_cache.pop(guild_id, None)
