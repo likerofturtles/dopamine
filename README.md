@@ -53,9 +53,11 @@ Invite the official, pre-hosted Dopamine bot (no self-hosting required) by click
 
 ```pip install -r requirements.txt```
 
-3. Add this to a .env file in the root folder:
+3. Add these lines to a .env file in the root folder:
 
 ```DISCORD_TOKEN=YourTokenHere```
+
+```OVERRIDE_VOTEWALL=True```
 
 4. Run the bot:
 
