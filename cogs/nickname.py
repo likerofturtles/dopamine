@@ -9,6 +9,7 @@ import re
 from config import NFDB_PATH, DB_PATH #DB_PATH is points.db
 from utils.checks import slash_mod_check
 from contextlib import asynccontextmanager
+from utils.log import LoggingManager
 
 LEET_MAP = str.maketrans({
     '4': 'a',
@@ -277,21 +278,13 @@ class Nickname(commands.Cog):
 
         return False
 
-    async def get_log_channel(self, guild_id: int) -> Optional[discord.TextChannel]:
-        try:
-            async with aiosqlite.connect(DB_PATH) as db:
-                async with db.execute('SELECT channel_id FROM log_channels WHERE guild_id = ?', (guild_id,)) as cursor:
-                    row = await cursor.fetchone()
-                    if row:
-                        return self.bot.get_channel(row[0])
-        except Exception:
-            pass
-        return None
-
     async def log_nickname_reset(self, member: discord.Member, old_name: str, reason: str):
-        log_ch = await self.get_log_channel(member.guild.id)
-        if not log_ch:
+        channel_id = await self.manager.logging_get(member.guild.id)
+        if not channel_id:
             return
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
         bot_user = member.guild.me
 
         description = (
@@ -314,9 +307,12 @@ class Nickname(commands.Cog):
             pass
 
     async def log_verify(self, member: discord.Member, author: discord.Member, status):
-        log_ch = await self.get_log_channel(member.guild.id)
-        if not log_ch:
+        channel_id = await self.manager.logging_get(member.guild.id)
+        if not channel_id:
             return
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
 
         action_text = "Verified" if status else "Unverified"
         footer_text = "verified" if status else "unverified"
@@ -338,9 +334,12 @@ class Nickname(commands.Cog):
             pass
 
     async def log_scan(self, author: discord.Member):
-        log_ch = await self.get_log_channel(author.guild.id)
-        if not log_ch:
+        channel_id = await self.manager.logging_get(author.guild.id)
+        if not channel_id:
             return
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
 
         embed = discord.Embed(
             title="A full server-wide scan for Nickname Moderator has been triggered.",
@@ -357,9 +356,12 @@ class Nickname(commands.Cog):
             pass
 
     async def log_profanity_toggle(self, member: discord.Member, new_state):
-        log_ch = await self.get_log_channel(member.guild.id)
-        if not log_ch:
+        channel_id = await self.manager.logging_get(member.guild.id)
+        if not channel_id:
             return
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
 
         embed = discord.Embed(
             title=f"Profanity Filter for Nickname Moderator has been **{'enabled' if new_state else 'disabled'}**.",
@@ -376,7 +378,7 @@ class Nickname(commands.Cog):
             pass
 
     async def log_symbol_toggle(self, member: discord.Member, new_state):
-        log_ch = await self.get_log_channel(member.guild.id)
+        log_ch = await self.manager.logging_get(member.guild.id)
         if not log_ch:
             return
 
@@ -395,9 +397,12 @@ class Nickname(commands.Cog):
             pass
 
     async def log_placeholder_change(self, member: discord.Member, new_state):
-        log_ch = await self.get_log_channel(member.guild.id)
-        if not log_ch:
+        channel_id = await self.manager.logging_get(member.guild.id)
+        if not channel_id:
             return
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
 
         embed = discord.Embed(
             title="Nickname Moderator placeholder has been changed",
