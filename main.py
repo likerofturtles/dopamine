@@ -114,13 +114,6 @@ class AioSqliteConnectionPool:
                 pass
         self._initialized = False
 
-def cleanup_old_cooldowns(cooldown_dict: dict, max_age_seconds: int):
-    current_time = time.time()
-    to_remove = [key for key, timestamp in cooldown_dict.items() if current_time - timestamp > max_age_seconds]
-    for key in to_remove:
-        del cooldown_dict[key]
-
-
 core_db_pool: Optional[AioSqliteConnectionPool] = None
 values_db_pool: Optional[AioSqliteConnectionPool] = None
 
