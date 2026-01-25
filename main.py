@@ -12,14 +12,6 @@ from logging.handlers import RotatingFileHandler
 if not TOKEN:
     raise SystemExit("ERROR: Set DISCORD_TOKEN in a .env in root folder.")
 
-def signal_handler(sig, frame):
-    print("\nBot shutdown requested...")
-    print("👋 Goodbye!")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 logger = logging.getLogger("discord")
 if LOGGING_DEBUG_MODE:
     logger.setLevel(logging.DEBUG)
@@ -43,6 +35,24 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!!", intents=intents, help_command=None)
 bot.synced = False
+
+async def signal_handler():
+    print("\nBot shutdown requested...")
+    extensions = list(bot.extensions.keys())
+    for extension in extensions:
+        try:
+            await bot.unload_extension(extension)
+            print(f"Unloaded {extension}")
+        except Exception as e:
+            print(f"Error unloading {extension}: {e}")
+    print("\n👋 Goodbye!")
+    await bot.close()
+
+try:
+    for s in (signal.SIGINT, signal.SIGTERM):
+        bot.loop.add_signal_handler(s, lambda: asyncio.create_task(signal_handler()))
+except NotImplementedError:
+    pass
 
 @bot.event
 async def on_ready():
