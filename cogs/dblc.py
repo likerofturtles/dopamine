@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.checks import slash_mod_check, mod_check
+from utils.log import LoggingManager
 from VERSION import bot_version
 import time
 import psutil
@@ -51,7 +52,12 @@ class Dblc(commands.cog):
                     ephemeral=True
                 )
             return await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
-        log_ch = await get_log_channel(interaction.guild)
+        channel_id = await self.manager.logging_get(interaction.guild.id)
+        if not channel_id:
+            return await interaction.response.send_message(f"No logging channel is set in **{interaction.guild}**.")
+        log_ch = self.bot.get_channel(channel_id)
+        if not log_ch:
+            log_ch = self.bot.fetch_channel(channel_id)
         if log_ch:
             log_embed = discord.Embed(
                 description=f"**{deleted_count}** message(s) purged in {interaction.channel.mention}.",
