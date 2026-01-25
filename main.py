@@ -54,55 +54,43 @@ try:
 except NotImplementedError:
     pass
 
+
+async def setup_hook():
+    cogs_dir = os.path.join(os.path.dirname(__file__), "cogs")
+
+    if os.path.exists(cogs_dir):
+        for filename in os.listdir(cogs_dir):
+            if filename.endswith(".py") and not filename.startswith("__"):
+                extension = f"cogs.{filename[:-3]}"
+                try:
+                    await bot.load_extension(extension)
+                    print(f"> Loaded {extension} Successfully")
+                except Exception as e:
+                    print(f"ERROR: Failed to load {extension}: {e}")
+    else:
+        print("WARNING: 'cogs' directory not found.")
+
+    try:
+        await bot.tree.sync()
+        print("Synced slash commands globally.")
+    except Exception as e:
+        print(f"Error: Failed to sync commands: {e}")
+
+bot.setup_hook = setup_hook
+
 @bot.event
 async def on_ready():
     if bot.owner_id is None:
         app_info = await bot.application_info()
         bot.owner_id = app_info.owner.id
-    print(f"Owner ID identified: {bot.owner_id}")
+        owner_username = bot.get_user(bot.owner_id)
+        if not owner_username:
+            owner_username = await bot.fetch_user(bot.owner_id)
 
-    cogs_to_load = [
-        'cogs.moderation',
-        'cogs.temphide',
-        'cogs.starboard',
-        'cogs.topgg',
-        'cogs.help',
-        'cogs.alerts',
-        'cogs.scheduled_messages',
-        'cogs.sticky_messages',
-        'cogs.autoreact',
-        'cogs.haiku',
-        'cogs.notes',
-        'cogs.member_tracker',
-        'cogs.maxwithstrapon',
-        'cogs.battery_monitor',
-        'cogs.slowmode',
-        'cogs.nickname',
-        'cogs.giveaway',
-        'cogs.welcome',
-        'cogs.logging'
-    ]
-
-    if not bot.synced:
-        for cog in cogs_to_load:
-            try:
-                await bot.load_extension(cog)
-                print(f"> Loaded {cog} Successfully")
-            except Exception as e:
-                print(f"ERROR: Failed to load {cog}: {e}")
-                import traceback
-                traceback.print_exc()
-        bot.start_time = time.time()
-        try:
-            await bot.tree.sync()
-            print(f"Synced slash commands")
-        except Exception as e:
-            print(f"Error: Failed to sync commands: {e}")
-            import traceback
-            traceback.print_exc()
-
-        print(f"Bot ready: {bot.user} (ID: {bot.user.id})")
-        bot.synced = True
+    print(f"---------------------------------------------------")
+    print(f"Bot ready: {bot.user} (ID: {bot.user.id})")
+    print(f"Bot Owner identified: {owner_username}")
+    print(f"---------------------------------------------------")
 
     await bot.change_presence(
         status=discord.Status.dnd,
