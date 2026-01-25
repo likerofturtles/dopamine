@@ -38,23 +38,21 @@ class Dblc(commands.Cog):
             messages = [msg async for msg in interaction.channel.history(limit=number)]
 
             if not messages:
-                return await interaction.followup.send("No messages found to delete.", ephemeral=True)
+                return await interaction.edit_original_response("No messages found to delete.", ephemeral=True)
 
             await interaction.channel.delete_messages(messages)
             deleted_count = len(messages)
 
         except discord.Forbidden:
-            return await interaction.followup.send("I don't have permission to delete messages here.", ephemeral=True)
+            return await interaction.edit_original_response("I don't have permission to delete messages here.", ephemeral=True)
         except discord.HTTPException as e:
             if e.code == 50034:
-                return await interaction.followup.send(
+                return await interaction.edit_original_response(
                     "Cannot delete messages older than 14 days using bulk delete.",
                     ephemeral=True
                 )
-            return await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
-        channel_id = await self.manager.logging_get(interaction.guild.id)
-        if not channel_id:
-            return await interaction.response.send_message(f"No logging channel is set in **{interaction.guild}**.")
+            return await interaction.edit_original_response(f"An error occurred: {e}", ephemeral=True)
+        channel_id = await self.bot.manager.logging_get(interaction.guild.id)
         log_ch = self.bot.get_channel(channel_id)
         if not log_ch:
             log_ch = self.bot.fetch_channel(channel_id)
@@ -66,9 +64,9 @@ class Dblc(commands.Cog):
             log_embed.set_footer(text=f"By {interaction.user}", icon_url=interaction.user.display_avatar.url)
             await log_ch.send(embed=log_embed)
 
-        await interaction.followup.send(f"Successfully purged **{deleted_count}** messages.", ephemeral=True)
+        await interaction.edit_original_response(f"Successfully purged **{deleted_count}** messages.", ephemeral=True)
 
-    @app_commands(name="ban", description="Fake-ban someone (cosmetic).")
+    @app_commands.ban(name="ban", description="Fake-ban someone (cosmetic).")
     @app_commands.describe(member="Who to fake-ban", duration="How long (text)", reason="Optional reason")
     async def ban(self, interaction: discord.Interaction, member: discord.Member | None = None,
                         duration: str | None = None, reason: str | None = None):
