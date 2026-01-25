@@ -279,5 +279,5 @@ class Dblc(commands.Cog):
         except Exception:
             pass
 
-    async def setup(bot):
-        await bot.add_cog(Dblc(bot))
+async def setup(bot):
+    await bot.add_cog(Dblc(bot))
