@@ -81,7 +81,7 @@ class Welcome(commands.Cog):
             except discord.Forbidden:
                 pass
 
-    welcome = app_commands.Group("welcome", description="Welcome feature's commands.")
+    welcome = app_commands.Group(name="welcome", description="Welcome feature's commands.")
     @welcome.command(name="toggle", description="Enable/disable welcome messages or set the target channel.")
     @app_commands.check(slash_mod_check)
     @app_commands.describe(channel="Toggle welcome messages feature. Include channel to enable; leave blank to disable.")
