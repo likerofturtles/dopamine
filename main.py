@@ -36,25 +36,6 @@ intents.reactions = True
 bot = commands.Bot(command_prefix="!!", intents=intents, help_command=None)
 bot.synced = False
 
-async def signal_handler():
-    print("\nBot shutdown requested...")
-    extensions = list(bot.extensions.keys())
-    for extension in extensions:
-        try:
-            await bot.unload_extension(extension)
-            print(f"Unloaded {extension}")
-        except Exception as e:
-            print(f"Error unloading {extension}: {e}")
-    print("\n👋 Goodbye!")
-    await bot.close()
-
-try:
-    for s in (signal.SIGINT, signal.SIGTERM):
-        bot.loop.add_signal_handler(s, lambda: asyncio.create_task(signal_handler()))
-except NotImplementedError:
-    pass
-
-
 async def setup_hook():
     cogs_dir = os.path.join(os.path.dirname(__file__), "cogs")
 
@@ -75,6 +56,23 @@ async def setup_hook():
         print("Synced slash commands globally.")
     except Exception as e:
         print(f"Error: Failed to sync commands: {e}")
+    for s in (signal.SIGINT, signal.SIGTERM):
+        bot.loop.add_signal_handler(
+            s, lambda: asyncio.create_task(signal_handler())
+        )
+
+    async def signal_handler():
+        print("\nBot shutdown requested...")
+        extensions = list(bot.extensions.keys())
+        for extension in extensions:
+            try:
+                await bot.unload_extension(extension)
+                print(f"Unloaded {extension}")
+            except Exception as e:
+                print(f"Error unloading {extension}: {e}")
+
+        print("👋 Goodbye!")
+        await bot.close()
 
 bot.setup_hook = setup_hook
 
