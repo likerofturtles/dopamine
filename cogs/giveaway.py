@@ -364,7 +364,7 @@ class GiveawayJoinView(discord.ui.View):
 
     @discord.ui.button(
         emoji="🎉",
-        style=discord.ui.ButtonStyle.blurple,
+        style=discord.ButtonStyle.blurple,
         custom_id="persistent_giveaway_join"
     )
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
