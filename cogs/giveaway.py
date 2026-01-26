@@ -61,33 +61,39 @@ class GiveawayEditSelect(discord.ui.Select):
         if value in ["image", "thumbnail", "color"]:
             return await interaction.response.send_modal(GiveawayVisualsModal(value, self.draft, self.parent_view))
 
-        new_view = discord.ui.View(timeout=180)
+        new_view = None
         msg = ""
 
         if value == "channel":
-            new_view.add_item(ChannelSelectView(self.draft, self.parent_view))
+            new_view = ChannelSelectView(self.draft, self.parent_view)
             msg = "Select the target channel:"
+
         elif value == "behavior":
+            new_view = discord.ui.View(timeout=180)
             new_view.add_item(BehaviorSelect(self.draft, self.parent_view))
             msg = "Change required role behaviour:"
+
         elif value == "extra":
-            new_view.add_item(RoleSelectView("extra", "Extra Entry Roles", self.draft, self.parent_view))
+            new_view = RoleSelectView("extra", "Extra Entry Roles", self.draft, self.parent_view)
             msg = "Choose roles for extra entries:"
+
         elif value == "required":
-            new_view = discord.ui.View()
-            new_view.add_item(RoleSelectView("required", "Required Roles", self.draft, self.parent_view))
+            new_view = RoleSelectView("required", "Required Roles", self.draft, self.parent_view)
             msg = "Choose roles required to enter:"
+
         elif value == "winner_role":
-            new_view.add_item(WinnerRoleSelectView("winner_role","Winner Role", self.draft, self.parent_view))
-            msg ="Choose role to be given to winner(s):"
+            new_view = WinnerRoleSelectView("winner_role", "Winner Role", self.draft, self.parent_view)
+            msg = "Choose role to be given to winner(s):"
+
         elif value == "blacklist":
-            new_view.add_item(RoleSelectView("blacklist", "Blacklisted Roles", self.draft, self.parent_view))
+            new_view = RoleSelectView("blacklist", "Blacklisted Roles", self.draft, self.parent_view)
             msg = "Choose roles that can't participate:"
+
         elif value == "host":
-            new_view.add_item(MemberSelectView(self.draft, self.parent_view))
+            new_view = MemberSelectView(self.draft, self.parent_view)
             msg = "Choose the host for this giveaway:"
 
-        if msg:
+        if msg and new_view:
             await interaction.response.send_message(msg, view=new_view, ephemeral=True)
 
 
