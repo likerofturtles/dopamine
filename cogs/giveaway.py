@@ -896,13 +896,15 @@ class Giveaways(commands.Cog):
     @app_commands.describe(
         prize="What is being given away",
         duration="How long the giveaway should last (eg. 6d, 7h, 6m, 7mon)",
-        winners="The number of winners of the giveaway"
+        winners="The number of winners of the giveaway (defaults to one)",
+        channel="The channel where the giveaway will be hosted (defaults to current channel)"
     )
     async def giveaway_create(
         self,
         interaction: discord.Interaction,
         prize: str, duration: str,
-        winners: app_commands.Range[int, 1, 50]
+        winners: app_commands.Range[int, 1, 50] = 1,
+        channel: Optional[discord.TextChannel] = Interaction.channel
     ):
         seconds = get_duration_to_seconds(duration)
         if seconds <= 0:
@@ -912,7 +914,7 @@ class Giveaways(commands.Cog):
 
         draft = GiveawayDraft(
             guild_id=interaction.guild.id,
-            channel_id=interaction.channel.id,
+            channel_id=channel.id,
             prize=prize,
             winners=winners,
             end_time=end_timestamp
