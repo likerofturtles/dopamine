@@ -53,7 +53,8 @@ class GiveawayEditSelect(discord.ui.Select):
         ]
         super().__init__(placeholder="Select a setting to customize...", options=options)
 
-    async def callback(self, interaction: discord.Interaction, value: str):
+    async def callback(self, interaction: discord.Interaction):
+        value = self.values[0]
         if value in ["prize", "winners", "duration"]:
             await interaction.response.send_modal(GiveawayMetadataModal(value, self.draft, self.parent_view))
         elif value == "channel":
@@ -354,8 +355,8 @@ class GiveawayPreviewView(discord.ui.View):
         success_embed = discord.Embed(description=f"Giveaway started successfully in {channel.mention}!",
                                       colour=discord.Colour.green())
         embed.set_footer(text=f"ID: {giveaway_id}")
-        await self.parent_view.message.delete()
         await interaction.response.send_message(embed=success_embed, ephemeral=True)
+        await interaction.message.delete()
         self.stop()
 
 class MemberSelectView(discord.ui.View):
