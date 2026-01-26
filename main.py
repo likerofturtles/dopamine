@@ -27,6 +27,10 @@ handler = RotatingFileHandler(
     maxBytes=5 * 1024 * 1024,
     backupCount=5
 )
+logger.addHandler(handler)
+
+formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+handler.setFormatter(formatter)
 
 intents = discord.Intents.default()
 intents.message_content = True
