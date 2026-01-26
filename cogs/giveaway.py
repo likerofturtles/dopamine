@@ -955,7 +955,7 @@ class Giveaways(commands.Cog):
             data_source = sorted(self.giveaway_cache.items())
         else:
             async with self.acquire_db() as db:
-                async with db.execute("SELECT giveaway_id, prize FROM giveaways WHERE guild_id = ?", (Interaction.guild_id)) as cursor:
+                async with db.execute("SELECT giveaway_id, prize FROM giveaways WHERE guild_id = ?", (interaction.guild_id)) as cursor:
                     rows = await cursor.fetchall()
                     data_source = [(row[0], {"prize": row[1]}) for row in rows]
 
@@ -981,13 +981,14 @@ class Giveaways(commands.Cog):
         prize: Optional[str] = "Unspecified Prize",
         duration: Optional[str] = "24h",
         winners: app_commands.Range[int, 1, 50] = 1,
-        channel: Optional[discord.TextChannel] = Interaction.channel
-    ):
+        channel: Optional[discord.TextChannel] = None):
         seconds = get_duration_to_seconds(duration)
         if seconds <= 0:
             return await interaction.response.send_message('Invalid duration format! Use things like "6d", "7h", or "21m".', ephemeral=True)
 
         end_timestamp = get_now_plus_seconds_unix(seconds)
+
+        channel = channel or interaction.channel
 
         draft = GiveawayDraft(
             guild_id=interaction.guild.id,
