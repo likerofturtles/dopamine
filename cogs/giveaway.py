@@ -437,6 +437,10 @@ class GiveawayJoinView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.giveaway_id = giveaway_id
+
+        self.join_button.custom_id = f"gw:join:{giveaway_id}"
+        self.list_button.custom_id = f"gw:list:{giveaway_id}"
+
         self.update_button_label()
 
     def update_button_label(self):
@@ -445,8 +449,7 @@ class GiveawayJoinView(discord.ui.View):
 
     @discord.ui.button(
         emoji="🎉",
-        style=discord.ButtonStyle.blurple,
-        custom_id="persistent_giveaway_join"
+        style=discord.ButtonStyle.blurple
     )
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.message.embeds:
@@ -495,14 +498,17 @@ class GiveawayJoinView(discord.ui.View):
                 msg = "🎉 You have successfully entered the giveaway!"
             await db.commit()
 
-        await interaction.response.edit_message(view=self)
+        self.update_button_label()
 
         await interaction.response.send_message(msg, ephemeral=True)
+        try:
+            await interaction.message.edit(view=self)
+        except discord.HTTPException:
+            pass
 
     @discord.ui.button(
         label="👤 Participants",
         style=discord.ButtonStyle.gray,
-        custom_id="persistent_giveaway_list"
     )
     async def list_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.message.embeds:
@@ -519,6 +525,8 @@ class GiveawayJoinView(discord.ui.View):
         participants = list(participant_set)
 
         g = self.cog.giveaway_cache.get(giveaway_id)
+        if not g:
+            return await interaction.response.send_message("This giveaway data seems to be missing :/", ephemeral=True)
         prize = g['prize']
         extra_roles_str = g.get('extra_entry_roles', '')
         extra_roles_list = [int(r) for r in extra_roles_str.split(',')] if extra_roles_str else []
