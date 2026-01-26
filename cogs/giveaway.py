@@ -869,7 +869,7 @@ class Giveaways(commands.Cog):
 
         embed = discord.Embed(
             title="GIVEAWAY ENDED",
-            description=f"Ended at: **<t:{end_ts}:R>**",
+            description=f"Ended: **<t:{end_ts}:R>**",
             colour=discord.Colour.red()
         )
         embed.add_field(name="Winners", value=", ".join([f"<@{w}>" for w in winners]), inline=False)
@@ -1155,7 +1155,6 @@ class Giveaways(commands.Cog):
             await interaction.edit_original_response(view=view)
         else:
             async def chunk_list(self, lst, n):
-                """Split a list into chunks of size n."""
                 for i in range(0, len(lst), n):
                     yield lst[i:i + n]
 
