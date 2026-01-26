@@ -555,7 +555,7 @@ class GiveawayJoinView(discord.ui.View):
 class PrivateLayoutView(discord.ui.LayoutView):
     def __init__(self, user, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.user = user  # The person who triggered the command
+        self.user = user
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user.id:
@@ -609,14 +609,9 @@ class DestructiveConfirmationView(PrivateLayoutView):
         self.value = True
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
-    async def on_timeout(self):
+    async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None and self.message:
-            self.title_text = "Timed Out"
-            self.body_text = f"~~{self.body_text}~~"
-            self.color = discord.Color(0xdf5046)
-            self.build_layout()
-            await self.message.edit(view=self)
-        self.stop()
+            await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
 class ConfirmationView(PrivateLayoutView):
     def __init__(self, title_text: str, body_text: str, color: discord.Color = None):
@@ -670,14 +665,9 @@ class ConfirmationView(PrivateLayoutView):
         self.value = True
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
-    async def on_timeout(self):
+    async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None and self.message:
-            self.title_text = "Timed Out"
-            self.body_text = f"~~{self.body_text}~~"
-            self.color = discord.Color(0xdf5046)
-            self.build_layout()
-            await self.message.edit(view=self)
-        self.stop()
+            await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
 class Giveaways(commands.Cog):
     def __init__(self, bot):

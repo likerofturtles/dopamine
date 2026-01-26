@@ -8,7 +8,7 @@ from discord.ui import Button, View, TextDisplay
 class PrivateLayoutView(discord.ui.LayoutView):
     def __init__(self, user, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.user = user  # The person who triggered the command
+        self.user = user
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user.id:
@@ -62,38 +62,9 @@ class DestructiveConfirmationView(PrivateLayoutView):
         self.value = True
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
-    async def on_timeout(self):
+    async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None and self.message:
-            self.title_text = "Timed Out"
-            self.body_text = f"~~{self.body_text}~~"
-            self.color = discord.Color(0xdf5046)
-            self.build_layout()
-            await self.message.edit(view=self)
-        self.stop()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        custom_id = interaction.data.get("custom_id")
-        if custom_id == "confirm_btn":
-            self.value = True
-        elif custom_id == "cancel_btn":
-            self.value = False
-
-        if self.value is not None:
-            self.stop()
-            return True
-        return False
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.grey)
-    async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = False
-        await interaction.response.defer()
-        self.stop()
-
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.red)
-    async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = True
-        await interaction.response.defer()
-        self.stop()
+            await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
 class Logging(commands.Cog):
     def __init__(self, bot):
