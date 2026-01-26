@@ -32,6 +32,20 @@ class GiveawayDraft:
     thumbnail: Optional[str] = None
     color: str = "discord.Color.blue()"
 
+class PrivateView(discord.ui.View):
+    def __init__(self, user, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user  # The person who triggered the command
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "This isn't for you!",
+                ephemeral=True
+            )
+            return False
+        return True
+
 class GiveawayEditSelect(discord.ui.Select):
     def __init__(self, cog, draft: GiveawayDraft, parent_view):
         self.cog = cog
@@ -304,7 +318,7 @@ class BehaviorSelect(discord.ui.Select):
         await self.parent_view.message.edit(embed=new_embed)
         await interaction.response.send_message("Role requirement behaviour updated successfully!", ephemeral=True)
 
-class GiveawayPreviewView(discord.ui.View):
+class GiveawayPreviewView(PrivateView):
     def __init__(self, cog, draft: GiveawayDraft):
         super().__init__(timeout=900)
         self.cog = cog
