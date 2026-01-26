@@ -318,32 +318,9 @@ class GiveawayPreviewView(discord.ui.View):
             except discord.HTTPException:
                 pass
 
-    @discord.ui.button(label="Start", style=discord.ButtonStyle.green)
-    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = self.cog.create_giveaway_embed(self.draft)
-
-        channel = self.cog.bot.get_channel(self.draft.channel_id)
-        if not channel:
-            try:
-                channel = await self.cog.bot.fetch_channel(self.draft.channel_id)
-            except (discord.Forbidden, discord.NotFound):
-                return await interaction.response.send_message("I searched far and wide, but I can't find the channel chosen for the giveaway!\n\nEnsure that I have the necessary permissions.", ephemeral=True)
-
-
-        msg = await channel.send(embed=embed)
-
-        giveaway_id = await self.cog.save_giveaway(self.draft, msg.id)
-
-        view = GiveawayJoinView(self.cog, giveaway_id)
-
-        embed.set_footer(text=f"ID: {giveaway_id}")
-        await msg.edit(embed=embed, view=view)
-
-        embed = discord.Embed(description=f"Giveaway started successfully in {channel.mention}!",
-                              colour=discord.Colour.green())
-        embed.set_footer(text=f"ID: {giveaway_id}")
-        await self.parent_view.message.edit(embed=self.cog.create_giveaway_embed(self.draft))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
         self.stop()
 
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.gray)
@@ -353,9 +330,32 @@ class GiveawayPreviewView(discord.ui.View):
         view.add_item(select)
         await interaction.response.send_message(embed=discord.Embed(title="Edit Giveaway", description="Select what you want to edit using the dropdown below.", colour=discord.Colour.blue()), view=view, ephemeral=True)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
+    @discord.ui.button(label="Start", style=discord.ButtonStyle.green)
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        embed = self.cog.create_giveaway_embed(self.draft)
+
+        channel = self.cog.bot.get_channel(self.draft.channel_id)
+        if not channel:
+            try:
+                channel = await self.cog.bot.fetch_channel(self.draft.channel_id)
+            except (discord.Forbidden, discord.NotFound):
+                return await interaction.response.send_message(
+                    "I searched far and wide, but I can't find the channel chosen for the giveaway!\n\nEnsure that I have the necessary permissions.",
+                    ephemeral=True)
+
+        giveaway_id = int(discord.utils.utcnow().timestamp()) + random.randint(1, 69)
+        view = GiveawayJoinView(self.cog, giveaway_id)
+        embed = self.cog.create_giveaway_embed(self.draft)
+        embed.set_footer(text=f"ID: {giveaway_id}")
+        msg = await channel.send(embed=embed, view=view)
+        await self.cog.save_giveaway_with_id(self.draft, msg.id, giveaway_id)
+
+        success_embed = discord.Embed(description=f"Giveaway started successfully in {channel.mention}!",
+                                      colour=discord.Colour.green())
+        embed.set_footer(text=f"ID: {giveaway_id}")
+        await self.parent_view.message.delete()
+        await interaction.response.send_message(embed=success_embed, ephemeral=True)
         self.stop()
 
 class MemberSelectView(discord.ui.View):
@@ -905,12 +905,10 @@ class Giveaways(commands.Cog):
 
         return embed
 
-    async def save_giveaway(self, draft: GiveawayDraft, message_id: int):
+    async def save_giveaway(self, draft: GiveawayDraft, message_id: int, giveaway_id: int):
         req_roles = ",".join(map(str, draft.required_roles)) if draft.required_roles else ""
         black_roles = ",".join(map(str, draft.blacklisted_roles)) if draft.blacklisted_roles else ""
         extra_roles = ",".join(map(str, draft.extra_entries)) if draft.extra_entries else ""
-
-        giveaway_id = int(discord.utils.utcnow().timestamp()) + random.randint(1, 69)
 
         data = {
             "guild_id": draft.guild_id,
