@@ -54,8 +54,6 @@ class GiveawayEditSelect(discord.ui.Select):
         super().__init__(placeholder="Select a setting to customize...", options=options)
 
     async def callback(self, interaction: discord.Interaction, value: str):
-        value = self.values[0]
-
         if value in ["prize", "winners", "duration"]:
             await interaction.response.send_modal(GiveawayMetadataModal(value, self.draft, self.parent_view))
         elif value == "channel":
