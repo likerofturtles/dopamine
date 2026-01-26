@@ -78,8 +78,7 @@ class GiveawayEditSelect(discord.ui.Select):
             new_view.add_item(RoleSelectView("required", "Required Roles", self.draft, self.parent_view))
             msg = "Choose roles required to enter:"
         elif value == "winner_role":
-
-            new_view.add_item(WinnerRoleSelectView("winner_role","Winner Role", self.draft))
+            new_view.add_item(WinnerRoleSelectView("winner_role","Winner Role", self.draft, self.parent_view))
             msg ="Choose role to be given to winner(s):"
         elif value == "blacklist":
             new_view.add_item(RoleSelectView("blacklist", "Blacklisted Roles", self.draft, self.parent_view))
@@ -165,6 +164,7 @@ class GiveawayVisualsModal(discord.ui.Modal):
             placeholder="Type here...",
             required=True
         )
+        self.add_item(self.input_field)
 
     async def on_submit(self, interaction: discord.Interaction):
         value = self.input_field.value
@@ -332,7 +332,6 @@ class GiveawayPreviewView(discord.ui.View):
     @discord.ui.button(label="Start", style=discord.ButtonStyle.green)
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        embed = self.cog.create_giveaway_embed(self.draft)
 
         channel = self.cog.bot.get_channel(self.draft.channel_id)
         if not channel:
@@ -348,8 +347,8 @@ class GiveawayPreviewView(discord.ui.View):
         embed = self.cog.create_giveaway_embed(self.draft)
         embed.set_footer(text=f"ID: {giveaway_id}")
         msg = await channel.send(embed=embed, view=view)
-        await self.cog.save_giveaway_with_id(self.draft, msg.id, giveaway_id)
-
+        await self.cog.save_giveaway(self.draft, msg.id, giveaway_id)
+        self.cog.bot.add_view(view)
         success_embed = discord.Embed(description=f"Giveaway started successfully in {channel.mention}!",
                                       colour=discord.Colour.green())
         embed.set_footer(text=f"ID: {giveaway_id}")
