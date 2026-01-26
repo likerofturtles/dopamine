@@ -618,7 +618,6 @@ class DestructiveConfirmationView(PrivateLayoutView):
             await self.message.edit(view=self)
         self.stop()
 
-
 class ConfirmationView(PrivateLayoutView):
     def __init__(self, title_text: str, body_text: str, color: discord.Color = None):
         super().__init__(timeout=30)
