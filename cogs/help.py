@@ -11,29 +11,56 @@ SUPPORT_URL = "https://discord.gg/VWDcymz648"
 VOTE_EMOJI = "🔒"
 
 
-class HelpSelect(discord.ui.Select):
-    """Dropdown menu for navigating the multi-page help system."""
+class PrivateView(discord.ui.View):
+    def __init__(self, user, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
 
-    def __init__(self, parent_view: "HelpView"):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "This isn't for you!",
+                ephemeral=True
+            )
+            return False
+        return True
+
+class PrivateSelect(discord.ui.Select):
+    def __init__(self, user, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "This isn't for you!",
+                ephemeral=True
+            )
+            return False
+        return True
+
+class HelpSelect(PrivateSelect):
+
+    def __init__(self, user: discord.User, parent_view: "HelpView"):
         options = [
             discord.SelectOption(label="Home", description="Introduction & links.", value="Home", emoji="🏠"),
             discord.SelectOption(label="Moderation",
                                  description="The core moderation system of Dopamine.", value="Moderation",
                                  emoji="🚨"),
-            discord.SelectOption(label="Server Management",
-                                 description="Utilities for logging, purging, and diagnostics.", value="ServerManagement",
+            discord.SelectOption(label="Administration & Logs",
+                                 description="Essential tools for maintaining server hygiene and diagnosing the bot.", value="Administration",
                                  emoji="⚙️"),
-            discord.SelectOption(label="Engagement",
-                                 description="Starboards, LFG posts, reactions, Haikus.", value="Engagement1",
+            discord.SelectOption(label="Engagement Tools",
+                                 description="Starboards, LFG posts, automated reactions, Haikus.", value="Engagement1",
                                  emoji="✨"),
             discord.SelectOption(label="Automations",
-                                 description="Scheduled & Sticky Messages.", value="Automation",
+                                 description="Set-and-forget tools for consistent channel messaging and flow control.", value="Automation",
                                  emoji="🤖"),
-            discord.SelectOption(label="Utilities",
-                                 description="Member tracker, notes, and more.", value="Personal",
+            discord.SelectOption(label="Member Tools & Misc",
+                                 description="Private notes, growth tracking, and misc. fun.", value="Utilities",
                                  emoji="📦"),
         ]
-        super().__init__(placeholder="Choose a feature category...", options=options, min_values=1, max_values=1, custom_id="help_select")
+        super().__init__(user, placeholder="Choose a feature category...", options=options, min_values=1, max_values=1, custom_id="help_select")
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
@@ -58,14 +85,13 @@ class HelpSelect(discord.ui.Select):
             await interaction.response.send_message("Error loading help page. Please use /help again.", ephemeral=True)
 
 
-class HelpView(discord.ui.View):
-    """The main view containing the navigation dropdown."""
+class HelpView(PrivateView):
 
-    def __init__(self, embeds_map: Dict[str, discord.Embed], bot: commands.Bot = None):
-        super().__init__(timeout=None)
+    def __init__(self, user: discord.User, embeds_map: Dict[str, discord.Embed], bot: commands.Bot = None):
+        super().__init__(user, timeout=None)
         self.embeds_map = embeds_map
         self.bot = bot
-        self.add_item(HelpSelect(self))
+        self.add_item(HelpSelect(user=user, parent_view=self))
 
     async def on_timeout(self):
         pass
@@ -77,20 +103,10 @@ class HelpCog(commands.Cog):
         self.last_help_time: Dict[Union[int, str], float] = {}
 
     async def cog_load(self):
-        """Register persistent views when cog loads"""
         embeds_map = self._build_embeds()
         self.bot.add_view(HelpView(embeds_map, self.bot))
 
-    @staticmethod
-    def _cleanup_old_cooldowns(cooldown_dict: Dict[Union[int, str], float], max_age_seconds: int):
-        """Remove cooldown entries older than max_age_seconds to prevent memory leaks."""
-        current_time = time.time()
-        to_remove = [key for key, timestamp in cooldown_dict.items() if current_time - timestamp > max_age_seconds]
-        for key in to_remove:
-            del cooldown_dict[key]
-
     def _build_embeds(self) -> Dict[str, discord.Embed]:
-        """Create and return all help embeds keyed by their selection value."""
         icon_url = self.bot.user.display_avatar.url if self.bot.user else None
 
         def create_base_embed(title: str, description: str) -> discord.Embed:
@@ -109,125 +125,108 @@ class HelpCog(commands.Cog):
                 "**Welcome to Dopamine,** the Discord bot that hits just as good as the real thing! 😉 "
                 "I'm your all-in-one moderation and utility bot, here to help keep your server running smoothly. ^_^\n\n"
                 "-# [**__Vote__**]({VOTE_URL}) • [**__Support Server__**]({SUPPORT_URL})"
-            ).format(VOTE_EMOJI=VOTE_EMOJI, VOTE_URL=VOTE_URL, SUPPORT_URL=SUPPORT_URL)
+            ).format(VOTE_URL=VOTE_URL, SUPPORT_URL=SUPPORT_URL)
         )
 
         moderation_description = (
-            "Dopamine is a bot that offers moderation with a customizable, 12-point system. Instead of individual "
-            "commands for mute, kick, and ban, moderators simply assign points, and the bot automatically "
-            "applies the correct punishment based on your server's configured thresholds.\n\n"
-            "### Current Default Point Actions (Customizable via `/pointsvalue`)\n"
-            "Punishments escalate as points increase:\n"
-            "* **1 Point:** Warning\n"
-            "* **2 Points:** 15-Minute Timeout\n"
-            "* **3 Points:** 30-Minute Timeout\n"
-            "* **4 Points:** 45-Minute Timeout\n"
-            "* **5 Points:** 60-Minute Timeout\n"
-            "* **6 Points:** 12-Hour Ban\n"
-            "* **7 Points:** 12-Hour Ban\n"
-            "* **8 Points:** 1-Day Ban\n"
-            "* **9 Points:** 3-Day Ban\n"
-            "* **10 Points:** 7-Day Ban\n"
-            "* **11 Points:** 7-Day Ban\n"
-            "* **12 Points:** Permanent Ban\n\n"
-            "**Decay System:** Points automatically decay (subtract 1) every two weeks if a user receives no new punishments.\n"
-            "**Rejoin Policy:** Permanently banned users who are unbanned and rejoin start with **4 points** instead of zero."
+            "Dopamine replaces traditional mute/kick/ban commands with a **12-point escalation system**. "
+            "Moderators assign points, and the bot handles the math and the punishment automatically.\n\n"
+            "**Punishment Logic (Customizable via `/pointvalues`):**\n"
+            "• 1 Point: Warning\n"
+            "• 2-5 Points: Incremental Timeouts (15m to 1h)\n"
+            "• 6-11 Points: Incremental Bans (12h to 7d)\n"
+            "• 12 Points: Permanent Ban\n> The points system is completely customizable, and you can customize point amounts for each action or disable an action comlpetely.\n\n"
+            
+            "**Core Mechanics:**\n"
+            "• **Decay:** Points drop by 1 every two weeks (can be customized) if no new infractions occur.\n"
+            "• **Rejoin:** Users unbanned via the bot start at 4 points (can be customized) to prevent immediate repeat offenses."
         )
-
-        page2 = create_base_embed("Core Moderation & Points", moderation_description)
-        page2.add_field(name="Commands", value="""
-            `/point <user> <points> [reason]` - Add points and trigger auto-punishment.
-            `/pardon <user> <points> [reason]` - Remove points from a user.
-            `/points <user>` - Inspect a user's current point total and history.
-            `/pointsvalue` - View and customize the punishment thresholds for your server.
-            `/unban <user>` - Unban a user.
-        """, inline=False)
+        page2 = create_base_embed("Automated Moderation", moderation_description)
+        page2.add_field(name="Management Commands", value=(
+            "`/point` • Add points & trigger auto-punishment\n"
+            "`/pardon` • Remove points from a user history\n"
+            "`/points` • View current point total and history\n"
+            "`/unban` • Unban a user."
+        ), inline=False)
+        page2.add_field(name="Nickname Moderator", value=(
+            "Automatically flags and resets offensive display names to a pre-configured placeholder.\n"
+            "`/nickname moderator panel` • Configure filters and placeholders\n"
+            "`/nickname moderator verify` • Whitelist specific users from the filter"
+        ), inline=False)
 
         page3 = create_base_embed(
-            "Server Management",
-            "Essential utilities for server management, logging, and general administration."
+            "Administration & Logs",
+            "Essential tools for maintaining server hygiene and tracking bot activity."
         )
-        page3.add_field(name="Administration", value="""
-            `/purge <amount>` - Delete messages in bulk (logs to log channel).
-            `/setlog <channel>` - Configure the channel for moderation and bot action logs.
-            `/welcome <channel>` - Configure/disable welcome messages for new members.
-            `/echo <message>` - Make the bot send a message (Mod Only).
-        """, inline=False)
-        page3.add_field(name="Fun & Miscellaneous", value=f"""
-            `/latency info` - Display advanced, real-time latency and related info for the bot.
-            `/avatar <user>` - Display the full avatar of a user.
-        """, inline=False)
+        page3.add_field(name="Configuration", value=(
+            "**Logging:** Set your audit channel with `/logging enable`.\n"
+            "**Welcoming:** Automated join messages via `/welcome`.\n"
+            "**Maintenance:** Bulk delete messages using `/purge`.\n"
+            "**Utility:** Use `/echo` to send messages as the bot."
+        ), inline=False)
+        page3.add_field(name="Bot Status", value=(
+            "`/latency info` • Real-time performance metrics\n"
+            "`/servercount` • Current global reach"
+        ), inline=False)
 
         page4 = create_base_embed(
-            "Engagement (Starboard & LFG)",
-            "Interactive features designed to highlight great content, organize groups, and interact with messages."
+            "Engagement Tools",
+            "Features designed to surface the best content, organize player groups, and automated interactions for engagement."
         )
-        page4.add_field(name="Starboard & LFG", value="""
-            **Starboard:** Watches for ⭐ reactions and posts high-engagement messages.
-            `/starboard setchannel <channel>` - Set the Starboard destination channel.
-            `/starboard threshold <count>` - Set the minimum number of ⭐ reactions required to post.
+        page4.add_field(name="Starboard & LFG", value=(
+            "**Starboard:** Showcase high-quality posts based on ⭐ reactions.\n"
+            "• `/starboard set_channel` | `/starboard threshold`\n\n"
+            "**Looking For Group:** Create posts that ping everyone who reacts once a group is full.\n"
+            "• `/lfg create` | `/lfg threshold`"
+        ), inline=False)
+        page4.add_field(name="Automated Interactions", value=(
+            "**AutoReact:** React to new messages (or image-only posts) with up to 3 emojis.\n"
+            "• `/autoreact panel setup` | `/autoreact member whitelist`\n\n"
+            "**Haiku Detection:** Automatically identifies 5-7-5 syllable patterns.\n"
+            "• `/haiku detection enable/disable`"
+        ), inline=False)
 
-            **LFG:** Create group posts that mention all reactors once a threshold is met.
-            `/lfg create <post_details>` - Create a new LFG post.
-            `/lfg threshold <count>` - Set the reaction count required to trigger the group ping.
-        """, inline=False)
-        page4.add_field(name=f"({VOTE_EMOJI}) Reactions and Haikus", value=f"""
-            **AutoReact Panels:** Automatically react to new messages with up to 3 defined emojis.
-            `/autoreact panel setup` - Create/Edit the panel.
-            `/autoreact member whitelist` - Only react to messages from specific whitelisted users.
-            `/autoreact image only` - Only react if the message contains an image/embed.
-
-            **Haiku Detection:** Detects Haikus. Yep, that's what it does.
-            `/haiku detection enable/disable` - Turn detection on or off in a single channel.
-        """, inline=False)
 
         page5 = create_base_embed(
-            "Automations (Scheduled & Sticky)",
-            "Set-and-forget tools for keeping channels active and information visible."
+            "Automations",
+            "Set-and-forget tools for consistent channel messaging and flow control."
         )
-        page5.add_field(name="Scheduled Messages", value="""
-            Set up messages to post repeatedly (e.g., every 3 days, every 2 weeks).
-            `/scheduledmessage panel setup` - Open the UI to create a new message (name, frequency, content).
-            `/scheduledmessage panel delete` - Delete a scheduled message (uses autocomplete).
-            `/scheduledmessage panel start/stop` - Toggle activity.
-            `/scheduledmessage panels` - List all configured messages.
-        """, inline=False)
-        page5.add_field(name=f"({VOTE_EMOJI}) Sticky Messages", value=f"""
-            Keeps a message pinned to the bottom of the channel, reposting it whenever a new message is sent.
-            `/sticky panel setup` - Open the UI to define the message content (title, description, image).
-            `/sticky panel start/stop` - Activate/deactivate the sticky message in a channel.
-            `/sticky panel modes` - Toggle Image-Only Mode and Member Whitelist Mode.
-            `/sticky panel delete` - Delete a configuration.
-        """, inline=False)
+        page5.add_field(name="Scheduled & Sticky Messages", value=(
+            "**Scheduled Messages:** Post recurring announcements (e.g., every 3 days).\n"
+            "• `/scheduledmessage panel setup` | `/scheduledmessage panels`\n\n"
+            "**Sticky Messages:** Keep vital info pinned at the very bottom of a channel.\n"
+            "• `/sticky panel setup` | `/sticky panel modes`"
+        ), inline=False)
+        page5.add_field(name="Slowmode Scheduler", value=(
+            "Automate channel chat speed based on time of day.\n"
+            "• `/slowmode schedule start` • Set active hours\n"
+            "• `/slowmode configure` • Manual override"
+        ), inline=False)
 
         page6 = create_base_embed(
-            f"Utilities",
-            "Tools to enhance the Discord user/server experience."
+            "Member Tools & Misc",
+            "Private notes, growth tracking, and miscellaneous fun."
         )
-
-        page6.add_field(name=f"({VOTE_EMOJI}) Member Tracker", value=f"""
-                    Tracks server member count, updating a channel message every 5 minutes (useful for growth goals).
-                    `/membertracker enable/disable` - Turn the tracker on/off.
-                    `/membertracker edit` - **Modal UI** to set goals, customize format, and embed color.
-                    `/membertracker info` - View format token documentation.
-                """, inline=False)
-        page6.add_field(name=f"({VOTE_EMOJI}) Notes", value=f"""
-            Securely store personal notes accessible globally across all servers I'm in.
-            `/note create` - Use a **Modal UI** to save a new note.
-            `/note fetch/list/delete` - Retrieve, list, or remove notes (uses dynamic autocomplete).
-        """, inline=False)
-        page6.add_field(name="Fun & Misc.", value=f"""
-                    `/temphide <message>` - Send a hidden, ROT13-encoded message that only the recipient can reveal using a button.
-                    ({VOTE_EMOJI}) `/maxwithstrapon` - Ignore the command's name. Turn anyone into Max Verstappen!
-                """, inline=False)
+        page6.add_field(name="Tracking & Data", value=(
+            "**Member Tracker:** Update a live channel message with server growth stats.\n"
+            "• `/membertracker edit` | `/membertracker info`\n\n"
+            "**Private Notes:** Save private notes that follow you across all servers.\n"
+            "• `/note create` | `/note list` | `/note fetch`"
+        ), inline=False)
+        page6.add_field(name="Miscellaneous", value=(
+            "`/alert` • Read developer updates and changelogs\n"
+            "`/temphide` • Send encrypted (ROT13) messages that are hidden until you click a reveal button\n"
+            "`/avatar` • View user profile pictures\n"
+            "`/maxwithstrapon` • Transform anyone into Max Verstappen"
+        ), inline=False)
 
         return {
             "Home": page1,
             "Moderation": page2,
-            "ServerManagement": page3,
-            "Engagement1": page4,
+            "Administration": page3,
+            "Engagement": page4,
             "Automation": page5,
-            "Personal": page6,
+            "Utilities": page6,
         }
 
     async def _send_help_message_prefix(self, ctx: commands.Context):
@@ -240,58 +239,13 @@ class HelpCog(commands.Cog):
 
     @commands.command(name="help")
     async def help_prefix(self, ctx: commands.Context):
-        """Prefix help command with per-guild cooldown."""
-        cooldown_seconds = 30
-        now = time.time()
-        guild_id_or_user_id = ctx.guild.id if ctx.guild else ctx.author.id
-        last_time = self.last_help_time.get(guild_id_or_user_id, 0)
-
-        if now - last_time < cooldown_seconds:
-            remaining = int(cooldown_seconds - (now - last_time))
-            cooldown_embed = discord.Embed(
-                title="Slow down!",
-                description=f"This command is on cooldown. Try again in **{remaining}** seconds.",
-                color=discord.Color.red()
-            )
-
-            try:
-                await ctx.message.delete()
-            except discord.Forbidden:
-                pass
-
-            await ctx.send(embed=cooldown_embed, delete_after=5)
-            return
-
-        self._cleanup_old_cooldowns(self.last_help_time, 60)
-        self.last_help_time[guild_id_or_user_id] = now
-
-        await self._send_help_message_prefix(ctx)
+        embeds_map = self._build_embeds()
+        await ctx.send(embed=embeds_map["Home"], view=HelpView(ctx.author, embeds_map, self.bot))
 
     @app_commands.command(name="help", description="Show the bot help menu with category navigation.")
     async def help_slash(self, interaction: discord.Interaction):
-        cooldown_seconds = 30
-        now = time.time()
-        guild_id_or_user_id = interaction.guild.id if interaction.guild else interaction.user.id
-        last_time = self.last_help_time.get(guild_id_or_user_id, 0)
-
-        if now - last_time < cooldown_seconds:
-            remaining = int(cooldown_seconds - (now - last_time))
-            cooldown_embed = discord.Embed(
-                title="Slow down!",
-                description=f"This command is on cooldown. Try again in **{remaining}** seconds.",
-                color=discord.Color.red()
-            )
-
-            await interaction.response.send_message(
-                embed=cooldown_embed,
-                ephemeral=True
-            )
-            return
-
-        self._cleanup_old_cooldowns(self.last_help_time, 60)
-        self.last_help_time[guild_id_or_user_id] = now
-
-        await self._send_help_message_slash(interaction)
+        embeds_map = self._build_embeds()
+        await interaction.response.send_message(embed=embeds_map["Home"], view=HelpView(interaction.user, embeds_map, self.bot))
 
 
 async def setup(bot: commands.Bot):
