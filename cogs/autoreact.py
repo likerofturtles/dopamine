@@ -158,7 +158,10 @@ class AutoReact(commands.Cog):
     async def panel_name_autocomplete(self, interaction: discord.Interaction, current: str):
         current_lower = current.lower()
         choices = [
-            app_commands.Choice(name=data['name'], value=data['name'])
+            app_commands.Choice(
+                name=f"{data['name']} ({data['panel_id']})",
+                value=data['name']
+            )
             for (g_id, p_id), data in self.panel_cache.items()
             if g_id == interaction.guild_id and current_lower in data['name'].lower()
         ]
@@ -334,16 +337,40 @@ class AutoReact(commands.Cog):
         await interaction.response.send_message(f"Select a panel to whitelist {member.display_name}:", view=view,
                                                 ephemeral=True)
 
-    @image_group.command(name="only", description="Toggle image-only mode")
+    image_group.command(name="only", description="Toggle image-only mode for a specific panel")
+
     @app_commands.check(slash_mod_check)
-    async def autoreact_image_only_mode(self, interaction: discord.Interaction):
-        guild_panels = [p for (g, pid), p in self.panel_cache.items() if g == interaction.guild.id]
-        if not guild_panels: return await interaction.response.send_message("Create a panel first.", ephemeral=True)
+    @app_commands.autocomplete(name=panel_name_autocomplete)
+    @app_commands.describe(name="The name of the panel", enabled="Whether image-only mode should be on or off")
+    async def autoreact_image_only_mode(self, interaction: discord.Interaction, name: str, enabled: bool):
+        target = next(
+            (p for (g, pid), p in self.panel_cache.items()
+             if g == interaction.guild_id and p['name'] == name),
+            None
+        )
 
-        view = ImageOnlyModeSelectionView(self, interaction.guild.id, guild_panels)
-        embed = discord.Embed(title="Select AutoReact Panel for Image-Only Mode", description="Choose which autoreact panel to enable image-only mode for:", color=discord.Color(0x337fd5))
+        if not target:
+            return await interaction.response.send_message("Panel not found.", ephemeral=True)
 
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        mode_val = 1 if enabled else 0
+
+        async with self.acquire_db() as db:
+            await db.execute(
+                "UPDATE autoreact_panels SET image_only_mode = ? WHERE guild_id = ? AND panel_id = ?",
+                (mode_val, interaction.guild_id, target['panel_id'])
+            )
+            await db.commit()
+
+        target['image_only_mode'] = mode_val
+
+        status_text = "enabled" if enabled else "disabled"
+        embed = discord.Embed(
+            title="Image-Only Mode Updated",
+            description=f"Image-only mode has been **{status_text}** for panel: **{name}**.",
+            color=discord.Color.green() if enabled else discord.Color.red()
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
