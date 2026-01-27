@@ -21,6 +21,54 @@ EMOJI_REGEX = re.compile(
 )
 
 
+class MemberWhitelistUserView(discord.ui.View):
+    def __init__(self, cog, panel: Dict):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.panel = panel
+
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Select members to whitelist...", min_values=1,
+                       max_values=25)
+    async def select_users(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        guild_id = interaction.guild_id
+        panel_id = self.panel['panel_id']
+        key = (guild_id, panel_id)
+
+        selected_members = select.values
+        added_names = []
+
+        async with self.cog.acquire_db() as db:
+            await db.execute(
+                "UPDATE autoreact_panels SET member_whitelist = 1 WHERE guild_id = ? AND panel_id = ?",
+                key
+            )
+            self.panel['member_whitelist'] = 1
+
+            for member in selected_members:
+                if member.bot:
+                    continue
+
+                await db.execute(
+                    "INSERT OR REPLACE INTO autoreact_whitelist (guild_id, panel_id, user_id) VALUES (?, ?, ?)",
+                    (guild_id, panel_id, member.id)
+                )
+
+                if key not in self.cog.whitelist_cache:
+                    self.cog.whitelist_cache[key] = set()
+                self.cog.whitelist_cache[key].add(member.id)
+
+                added_names.append(member.display_name)
+
+            await db.commit()
+
+        if not added_names:
+            return await interaction.response.send_message("No valid (non-bot) members were added.", ephemeral=True)
+
+        await interaction.response.send_message(
+            f"Successfully whitelisted: **{', '.join(added_names)}** for panel **{self.panel['name']}**.",
+            ephemeral=True
+        )
+
 class AutoReact(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -325,17 +373,29 @@ class AutoReact(commands.Cog):
 
         await interaction.response.send_message(embed=discord.Embed(title="AutoReact Panel Updated", description=f"Updated panel **{name}**.", color=discord.Color.green()), ephemeral=True)
 
-    @member_group.command(name="whitelist", description="Whitelist a member")
+    @member_group.command(name="whitelist", description="Manage whitelisted members for a panel")
     @app_commands.check(slash_mod_check)
-    async def autoreact_member_whitelist(self, interaction: discord.Interaction, member: discord.Member):
-        if member.bot: return await interaction.response.send_message("Bots cannot be whitelisted.", ephemeral=True)
+    @app_commands.autocomplete(name=panel_name_autocomplete)
+    @app_commands.describe(name="The name of the panel to manage")
+    async def autoreact_member_whitelist(self, interaction: discord.Interaction, name: str):
+        target = next(
+            (p for (g, pid), p in self.panel_cache.items()
+             if g == interaction.guild_id and p['name'] == name),
+            None
+        )
 
-        guild_panels = [p for (g, pid), p in self.panel_cache.items() if g == interaction.guild.id]
-        if not guild_panels: return await interaction.response.send_message("Create a panel first.", ephemeral=True)
+        if not target:
+            return await interaction.response.send_message("Panel not found.", ephemeral=True)
 
-        view = MemberWhitelistSelectionView(self, interaction.guild.id, member.id, guild_panels)
-        await interaction.response.send_message(f"Select a panel to whitelist {member.display_name}:", view=view,
-                                                ephemeral=True)
+        view = MemberWhitelistUserView(self, target)
+
+        embed = discord.Embed(
+            title=f"Whitelist Management: {target['name']}",
+            description="Select or remove members from the dropdown below to manage who can trigger AutoReact for this panel.",
+            color=0x337fd5
+        )
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     image_group.command(name="only", description="Toggle image-only mode for a specific panel")
 
