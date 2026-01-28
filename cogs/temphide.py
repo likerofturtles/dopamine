@@ -6,151 +6,114 @@ import aiosqlite
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Dict
 from config import TDB_PATH
 
+
 class TempHideCog(commands.Cog):
-    """Temporary hidden message functionality with ROT13 encoding."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.DB_PATH = TDB_PATH
-        self.cooldowns: dict[int, float] = {}
-        self._db_pool: list[aiosqlite.Connection] = []
-        self._pool_lock = asyncio.Lock()
-        self._pool_semaphore: Optional[asyncio.Semaphore] = None
+        self.message_cache: Dict[int, dict] = {}
+        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self._max_pool_size = 5
-    
-    def cleanup_old_cooldowns(self, max_age_seconds: int = 300):
-        """Remove cooldown entries older than max_age_seconds (default 5 minutes) to prevent memory leaks"""
-        current_time = time.time()
-        for user_id in list(self.cooldowns.keys()):
-            if current_time - self.cooldowns[user_id] > max_age_seconds:
-                del self.cooldowns[user_id]
 
     async def cog_load(self):
-        """Initialize database on cog load."""
-        await self.init_temp_db()
+        await self.init_pools(self._max_pool_size)
+        await self.init_db()
+        await self.populate_caches()
         self.bot.add_view(RevealView(self, 0))
-        if not self._cooldown_cleanup.is_running():
-            self._cooldown_cleanup.start()
+
 
     async def cog_unload(self):
-        """Close database connections on cog unload."""
-        if self._cooldown_cleanup.is_running():
-            self._cooldown_cleanup.cancel()
-        for conn in self._db_pool:
-            try:
+
+        if self.db_pool:
+            while not self.db_pool.empty():
+                conn = await self.db_pool.get()
                 await conn.close()
-            except Exception:
-                pass
-        self._db_pool.clear()
-        self._pool_semaphore = None
 
-    async def _init_db_pool(self):
-        """Initialize the connection pool with optimized settings."""
-        async with self._pool_lock:
-            if self._db_pool:
-                return
-
-            max_retries = 5
-            created_conns: list[aiosqlite.Connection] = []
-
-            for _ in range(self._max_pool_size):
-                attempt = 0
-                while True:
-                    try:
-                        db = await aiosqlite.connect(self.DB_PATH, timeout=5.0)
-                        await db.execute("PRAGMA busy_timeout=5000")
-                        await db.execute("PRAGMA journal_mode=WAL")
-                        await db.execute("PRAGMA wal_autocheckpoint=1000")
-                        await db.execute("PRAGMA synchronous=NORMAL")
-                        await db.execute("PRAGMA cache_size=-64000")
-                        await db.execute("PRAGMA foreign_keys=ON")
-                        await db.execute("PRAGMA optimize")
-                        await db.commit()
-                        created_conns.append(db)
-                        break
-                    except Exception:
-                        attempt += 1
-                        if attempt < max_retries:
-                            await asyncio.sleep(0.1 * (2 ** (attempt - 1)))
-                            continue
-                        raise
-
-            self._db_pool = created_conns
-            self._pool_semaphore = asyncio.Semaphore(len(self._db_pool))
+    async def init_pools(self, pool_size: int = 5):
+        if self.db_pool is None:
+            self.db_pool = asyncio.Queue(maxsize=pool_size)
+            for _ in range(pool_size):
+                conn = await aiosqlite.connect(
+                    self.DB_PATH,
+                    timeout=5,
+                    isolation_level=None,
+                )
+                await conn.execute("PRAGMA busy_timeout=5000")
+                await conn.execute("PRAGMA journal_mode=WAL")
+                await conn.execute("PRAGMA synchronous=NORMAL")
+                await conn.commit()
+                await self.db_pool.put(conn)
 
     @asynccontextmanager
-    async def get_db_connection(self):
-        """Async context manager that yields a pooled database connection."""
-        if not self._db_pool:
-            await self._init_db_pool()
-
-        await self._pool_semaphore.acquire()
-        db = self._db_pool.pop()
+    async def acquire_db(self):
+        conn = await self.db_pool.get()
         try:
-            yield db
-            await db.commit()
+            yield conn
         finally:
-            self._db_pool.append(db)
-            self._pool_semaphore.release()
+            await self.db_pool.put(conn)
 
-    @tasks.loop(minutes=5)
-    async def _cooldown_cleanup(self):
-        """Periodically clean up old cooldown entries to keep memory usage bounded."""
-        self.cleanup_old_cooldowns(300)
-
-    async def init_temp_db(self):
-        """Initialize the database with optimized settings."""
-        async with self.get_db_connection() as db:
+    async def init_db(self):
+        async with self.acquire_db() as db:
             await db.execute('''
-                CREATE TABLE IF NOT EXISTS temp_messages (
-                    message_id INTEGER PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    hidden_text TEXT NOT NULL,
-                    timestamp REAL NOT NULL
-                )
-            ''')
-            await db.execute('''
-                CREATE INDEX IF NOT EXISTS idx_temp_user 
-                ON temp_messages(user_id)
-            ''')
-            await db.execute('''
-                CREATE INDEX IF NOT EXISTS idx_temp_timestamp 
-                ON temp_messages(timestamp)
-            ''')
+                             CREATE TABLE IF NOT EXISTS temp_messages
+                             (
+                                 message_id INTEGER PRIMARY KEY,
+                                 user_id INTEGER NOT NULL,
+                                 hidden_text TEXT NOT NULL,
+                                 timestamp REAL NOT NULL
+                             )
+                             ''')
             await db.commit()
+
+    async def populate_caches(self):
+        self.message_cache.clear()
+        async with self.acquire_db() as db:
+            async with db.execute("SELECT * FROM temp_messages") as cursor:
+                rows = await cursor.fetchall()
+                columns = [column[0] for column in cursor.description]
+                for row in rows:
+                    data = dict(zip(columns, row))
+                    self.message_cache[data["message_id"]] = data
+
 
     async def store_message(self, user_id: int, hidden_text: str, message_id: int, timestamp: float):
-        """Store a hidden message in the database."""
-        async with self.get_db_connection() as db:
+        data = {
+            "message_id": message_id,
+            "user_id": user_id,
+            "hidden_text": hidden_text,
+            "timestamp": timestamp
+        }
+
+        async with self.acquire_db() as db:
             await db.execute(
                 'INSERT INTO temp_messages (message_id, user_id, hidden_text, timestamp) VALUES (?, ?, ?, ?)',
                 (message_id, user_id, hidden_text, timestamp)
             )
             await db.commit()
 
-    async def get_message(self, message_id: int) -> Optional[tuple[int, str]]:
-        """Retrieve a hidden message from the database."""
-        async with self.get_db_connection() as db:
-            cursor = await db.execute(
-                'SELECT user_id, hidden_text FROM temp_messages WHERE message_id = ?',
-                (message_id,)
-            )
-            row = await cursor.fetchone()
-            await cursor.close()
-            return row if row else None
+        self.message_cache[message_id] = data
 
     async def delete_message(self, message_id: int):
-        """Delete a hidden message from the database."""
-        async with self.get_db_connection() as db:
+        async with self.acquire_db() as db:
             await db.execute('DELETE FROM temp_messages WHERE message_id = ?', (message_id,))
             await db.commit()
 
+        if message_id in self.message_cache:
+            del self.message_cache[message_id]
+
+    async def get_message(self, message_id: int) -> Optional[tuple[int, str]]:
+        data = self.message_cache.get(message_id)
+        if data:
+            return (data["user_id"], data["hidden_text"])
+        return None
+
+
     @staticmethod
     async def send_error_reply(interaction_or_ctx, embed=None, message=None, ephemeral=True):
-        """Helper function to send error messages."""
         try:
             if hasattr(interaction_or_ctx, 'response') and not interaction_or_ctx.response.is_done():
                 if embed:
@@ -171,101 +134,40 @@ class TempHideCog(commands.Cog):
             pass
 
     async def handle_temphide(self, interaction_or_ctx, message_text: str):
-        """Handle the temphide command logic."""
-        is_slash_command = hasattr(interaction_or_ctx, 'response')
+        is_slash = hasattr(interaction_or_ctx, 'response')
+        user = interaction_or_ctx.user if is_slash else interaction_or_ctx.author
+        channel = interaction_or_ctx.channel
 
-        if is_slash_command:
-            user = interaction_or_ctx.user
-            channel = interaction_or_ctx.channel
-        else:
-            user = interaction_or_ctx.author
-            channel = interaction_or_ctx.channel
-
-        word_count = len(message_text.split())
-        if word_count > 1000:
-            embed = discord.Embed(
-                title="Message Too Long",
-                description="Your message exceeds the 1000 word limit.",
-                color=discord.Color.red()
-            )
+        if len(message_text.split()) > 1000:
+            embed = discord.Embed(title="Message Too Long", description="Max 1000 words.", color=discord.Color.red())
             await self.send_error_reply(interaction_or_ctx, embed=embed)
             return
 
         current_time = time.time()
-        if user.id in self.cooldowns:
-            time_since_last = current_time - self.cooldowns[user.id]
-            if time_since_last < 60:
-                remaining_time = int(60 - time_since_last)
-                embed = discord.Embed(
-                    description=f"This command is under cooldown. Please wait **{remaining_time}** seconds.",
-                    color=discord.Color.red()
-                )
-                if is_slash_command:
-                    await interaction_or_ctx.response.send_message(embed=embed, ephemeral=True)
-                else:
-                    await self.send_error_reply(interaction_or_ctx, embed=embed)
-                return
-
-        self.cooldowns[user.id] = current_time
-
-        if is_slash_command:
-            await interaction_or_ctx.response.defer()
-
-        if not is_slash_command:
-            try:
-                await interaction_or_ctx.message.delete()
-            except:
-                pass
-
-        encoded_message = await asyncio.to_thread(codecs.encode, message_text, 'rot13')
-
+        encoded = await asyncio.to_thread(codecs.encode, message_text, 'rot13')
         view = RevealView(self, 0)
 
         try:
-            if is_slash_command:
-                sent_message = await interaction_or_ctx.followup.send(
-                    f"{user.name}: {encoded_message}",
-                    view=view
-                )
-            else:
-                sent_message = await channel.send(
-                    f"{user.name}: {encoded_message}",
-                    view=view
-                )
+            content = f"{user.name}: {encoded}"
+            sent_message = await interaction_or_ctx.followup.send(content,
+                                                                  view=view) if is_slash else await channel.send(
+                content, view=view)
 
             view.message_id = sent_message.id
-
             await self.store_message(user.id, message_text, sent_message.id, current_time)
 
-            if is_slash_command:
-                await interaction_or_ctx.followup.send(
-                    "Hidden message created successfully! Click the Reveal button to reveal it.",
-                    ephemeral=True
-                )
-
-        except Exception as e:
-            embed = discord.Embed(
-                title="Error",
-                description="Failed to create hidden message. Please try again.",
-                color=discord.Color.red()
-            )
+            if is_slash:
+                await interaction_or_ctx.followup.send("Hidden message created!", ephemeral=True)
+        except Exception:
+            embed = discord.Embed(title="Error", description="Failed to create message.", color=discord.Color.red())
             await self.send_error_reply(interaction_or_ctx, embed=embed)
 
     @app_commands.command(name="temphide", description="Send a hidden message that only you can reveal")
-    @app_commands.describe(message="The message you want to hide (max 1000 words)")
     async def temphide_slash(self, interaction: discord.Interaction, message: str):
-        """Slash command for temphide."""
         await self.handle_temphide(interaction, message)
-
-    @commands.command(name="temphide")
-    async def temphide_prefix(self, ctx: commands.Context, *, message: str):
-        """Prefix command for temphide."""
-        await self.handle_temphide(ctx, message)
 
 
 class RevealView(discord.ui.View):
-    """Persistent view for revealing hidden messages."""
-
     def __init__(self, cog: TempHideCog, message_id: int):
         super().__init__(timeout=None)
         self.cog = cog
@@ -273,39 +175,24 @@ class RevealView(discord.ui.View):
 
     @discord.ui.button(label='Reveal', style=discord.ButtonStyle.primary, custom_id='reveal_button')
     async def reveal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Handle the reveal button click."""
         message_data = await self.cog.get_message(self.message_id)
 
         if not message_data:
-            await interaction.response.send_message(
-                "This message has already been revealed or doesn't exist.",
-                ephemeral=True
-            )
-            return
+            return await interaction.response.send_message("Already revealed or expired.", ephemeral=True)
 
         user_id, hidden_text = message_data
-
         if interaction.user.id != user_id:
-            await interaction.response.send_message(
-                "You can only reveal your own hidden messages.",
-                ephemeral=True
-            )
-            return
+            return await interaction.response.send_message("Not your message!", ephemeral=True)
 
         await interaction.response.defer()
-
         try:
-            await interaction.message.edit(
-                content=f"{interaction.user.name}: {hidden_text}",
-                view=None
-            )
-
+            await interaction.message.edit(content=f"{interaction.user.name}: {hidden_text}", view=None)
             await self.cog.delete_message(self.message_id)
-
         except discord.NotFound:
             await self.cog.delete_message(self.message_id)
-        except Exception as e:
+        except:
             pass
+
 
 async def setup(bot):
     await bot.add_cog(TempHideCog(bot))
