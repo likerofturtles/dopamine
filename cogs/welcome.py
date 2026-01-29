@@ -319,7 +319,7 @@ class CV2Helper(PrivateLayoutView):
 
                 section = discord.ui.Section(
                     discord.ui.TextDisplay(
-                        f"The text part of the welcome message. Click the customise button to customise the format.\n\n* **Current Format:**\n  * `{curr_text}`\n* **Available Variables:**\n  * `{{member.mention}}` - Mention the member.\n  * `{{member.name}}` - The member's username.\n  * `{{server.name}}` - The name of the server.\n  * `{{position}}` - The position/rank of the member."),
+                        f"The text part of the welcome message. Click the customise button to customise the format.\n\n* **Current Format:**\n  * ```{curr_text}```\n* **Available Variables:**\n  * `{{member.mention}}` - Mention the member.\n  * `{{member.name}}` - The member's username.\n  * `{{server.name}}` - The name of the server.\n  * `{{position}}` - The position/rank of the member."),
                     accessory=btn_text_config
                 )
                 container.add_item(section)
