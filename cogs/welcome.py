@@ -5,6 +5,7 @@ import aiosqlite
 import asyncio
 from typing import Optional, Dict
 from contextlib import asynccontextmanager
+from PIL import Image, ImageDraw, ImageFont
 
 from config import WDB_PATH
 from utils.checks import slash_mod_check
@@ -50,7 +51,8 @@ class Welcome(commands.Cog):
                              (
                                  guild_id INTEGER PRIMARY KEY,
                                  channel_id INTEGER,
-                                 custom_message TEXT,
+                                 custom_line1 TEXT,
+                                 custom_line2 TEXT,
                                  show_image INTEGER DEFAULT 0,
                                  image_url TEXT,
                                  embed_color TEXT
