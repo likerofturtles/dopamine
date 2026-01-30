@@ -58,7 +58,7 @@ class PrivateLayoutView(discord.ui.LayoutView):
 
 class DestructiveConfirmationView(PrivateLayoutView):
     def __init__(self, user, title_name, cog, guild_id):
-        super().__init__(user)
+        super().__init__(user, timeout=30)
         self.title_name = title_name
         self.cog = cog
         self.guild_id = guild_id
@@ -101,12 +101,16 @@ class DestructiveConfirmationView(PrivateLayoutView):
 
     async def cancel_callback(self, interaction: discord.Interaction):
         self.value = False
-        await self.update_view(interaction, "Action Canceled")
+        await self.update_view(interaction, "Action Canceled", discord.Color(0xdf5046))
 
     async def confirm_callback(self, interaction: discord.Interaction):
         self.value = True
-        await self.cog.delete_panel(self.guild_id, self.title_name)
-        await self.update_view(interaction, "Action Confirmed")
+        await self.update_view(interaction, "Action Confirmed", discord.Color.green())
+
+    async def on_timeout(self, interaction: discord.Interaction):
+        if self.value is None:
+            await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
+            self.stop()
 
 
 class EditPage(PrivateLayoutView):
@@ -124,7 +128,6 @@ class EditPage(PrivateLayoutView):
         container.add_item(discord.ui.TextDisplay(f"## Edit: {p['title']}"))
         container.add_item(discord.ui.Separator())
 
-        # Include the current settings in the details display
         bots_enabled = p.get('include_bots', 1) == 1
         details = (
             f"**Channel:** <#{p['channel_id']}>\n"
@@ -136,7 +139,6 @@ class EditPage(PrivateLayoutView):
         container.add_item(discord.ui.TextDisplay(details))
         container.add_item(discord.ui.Separator())
 
-        # Row 1: Content and Deletion
         row1 = discord.ui.ActionRow()
         btn_edit_message = discord.ui.Button(label="Edit Message", style=discord.ButtonStyle.secondary)
         btn_edit_message.callback = self.edit_message_callback

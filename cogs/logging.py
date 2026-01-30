@@ -20,6 +20,15 @@ class PrivateLayoutView(discord.ui.LayoutView):
         return True
 
 class DestructiveConfirmationView(PrivateLayoutView):
+    def __init__(self, title_text: str, body_text: str, color: discord.Color = None):
+        super().__init__(timeout=30)
+        self.value = None
+        self.title_text = title_text
+        self.body_text = body_text
+        self.color = color
+        self.message: discord.Message = None
+        self.build_layout()
+
     def build_layout(self):
         self.clear_items()
         container = discord.ui.Container(accent_color=self.color)
@@ -64,7 +73,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
 
     async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None and self.message:
-            await self.update_view(interaction, "Action Confirmed", discord.Color.green())
+            await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
 
 class Logging(commands.Cog):
     def __init__(self, bot):

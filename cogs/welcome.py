@@ -156,8 +156,9 @@ class DestructiveConfirmationView(PrivateLayoutView):
         self.value = True
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
-    async def on_timeout(self):
+    async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None:
+            await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
             self.stop()
 
 
