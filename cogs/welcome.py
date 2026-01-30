@@ -79,7 +79,7 @@ class WelcomeImageModal(discord.ui.Modal, title="Customise Welcome Card"):
 
 class ChannelSelectView(discord.ui.View):
     def __init__(self, callback_func):
-        super().__init__(timeout=60)
+        super().__init__(timeout=30)
         self.callback_func = callback_func
 
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text],
@@ -106,16 +106,16 @@ class PrivateLayoutView(discord.ui.LayoutView):
 
 class DestructiveConfirmationView(PrivateLayoutView):
     def __init__(self, user, title_text, body_text):
-        super().__init__(user=user, timeout=60)
+        super().__init__(user=user, timeout=30)
         self.title_text = title_text
         self.body_text = body_text
         self.value = None
-        self.color = discord.Color(0xdf5046)  # Red initially
+        self.color = discord.Color(0xdf5046)
         self.build_layout()
 
     def build_layout(self):
         self.clear_items()
-        container = discord.ui.Container(accent_color=self.color)
+        container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay(f"### {self.title_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(self.body_text))
@@ -163,7 +163,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
 
 class CV2Helper(PrivateLayoutView):
     def __init__(self, cog, guild_id: int, user: discord.Member):
-        super().__init__(user=user, timeout=300)
+        super().__init__(user=user, timeout=None)
         self.cog = cog
         self.guild_id = guild_id
         self.data = self.cog.welcome_cache.get(guild_id, {})
@@ -191,87 +191,47 @@ class CV2Helper(PrivateLayoutView):
         if "image_url" in kwargs:
             self.cog.image_bytes_cache.pop(self.guild_id, None)
 
-    async def toggle_feature(self, interaction: discord.Interaction):
-        is_enabled = self.data.get("is_enabled", 0)
-        new_state = 0 if is_enabled else 1
 
-        if new_state == 1 and not self.data.get("channel_id"):
-            view = ChannelSelectView(self.channel_selected_callback)
-            await interaction.response.send_message("Please select a channel to enable welcome messages.", view=view,
-                                                    ephemeral=True)
-            return
-
-        await self.update_db(is_enabled=new_state)
-        await self.refresh_state()
-        await interaction.response.edit_message(view=self)
+    async def edit_channel_callback(self, interaction: discord.Interaction):
+        view = ChannelSelectView(self.channel_selected_callback)
+        await interaction.response.send_message("Select the channel where welcome messages should be sent:", view=view,
+                                                ephemeral=True)
 
     async def channel_selected_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await self.update_db(channel_id=channel.id, is_enabled=1)
         await self.refresh_state()
+        # Edit the original dashboard message with the new layout
         await interaction.response.edit_message(view=self)
 
-    async def toggle_text(self, interaction: discord.Interaction):
-        current = self.data.get("show_text", 1)
-        await self.update_db(show_text=0 if current else 1)
-        await self.refresh_state()
-        await interaction.response.edit_message(view=self)
+    async def send_test_callback(self, interaction: discord.Interaction):
+        channel_id = self.data.get("channel_id")
+        guild = interaction.guild
+        channel = guild.get_channel(channel_id) if channel_id else None
 
-    async def open_text_modal(self, interaction: discord.Interaction):
-        current_msg = self.data.get("custom_message")
-        await interaction.response.send_modal(WelcomeTextModal(current_msg, self.text_modal_callback))
+        if not channel:
+            return await interaction.response.send_message("Set a valid channel first!", ephemeral=True)
 
-    async def text_modal_callback(self, interaction: discord.Interaction, value: str):
-        await self.update_db(custom_message=value)
-        await self.refresh_state()
-        await interaction.response.edit_message(view=self)
+        await interaction.response.defer(ephemeral=True)
 
-    async def toggle_image(self, interaction: discord.Interaction):
-        current = self.data.get("show_image", 1)
-        await self.update_db(show_image=0 if current else 1)
-        await self.refresh_state()
-        await interaction.response.edit_message(view=self)
+        bot_member = guild.me
+        position = guild.member_count
+        pos_str = get_ordinal(position)
 
-    async def open_image_modal(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(WelcomeImageModal(self.data, self.image_modal_callback))
+        content, file = None, None
 
-    async def image_modal_callback(self, interaction: discord.Interaction, url: str, line1: str, line2: str):
-        final_url = url if url and ("http" in url) else None
-        await self.update_db(image_url=final_url, image_line1=line1, image_line2=line2)
-        await self.refresh_state()
-        await interaction.response.edit_message(view=self)
+        if self.data.get("show_text", 1):
+            raw_msg = self.data.get("custom_message") or "Welcome to **{server.name}**, {member.mention}!"
+            content = f"**TEST:** " + raw_msg.format(member=bot_member, server=guild, position=pos_str)
 
-    async def reset_button_callback(self, interaction: discord.Interaction):
-        view = DestructiveConfirmationView(
-            user=interaction.user,
-            title_text="Reset Welcome Settings?",
-            body_text="This will delete all custom text, images, and configurations. The feature will remain enabled if it is currently enabled."
-        )
-        await interaction.response.send_message(view=view, ephemeral=True)
-        await view.wait()
+        if self.data.get("show_image", 1):
+            file = await self.cog.generate_welcome_card(bot_member, self.data)
 
-        if view.value:
-            async with self.cog.acquire_db() as db:
-                await db.execute("""
-                    UPDATE welcome_settings 
-                    SET custom_message=NULL, custom_line1=NULL, custom_line2=NULL, 
-                        image_url=NULL, embed_color=NULL, show_text=1, show_image=1 
-                    WHERE guild_id=?
-                """, (self.guild_id,))
-                await db.commit()
+        try:
+            await channel.send(content=content, file=file)
+            await interaction.followup.send(f"Test message sent to {channel.mention}!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(f"I lack permissions to speak in {channel.mention}.", ephemeral=True)
 
-            if self.guild_id in self.cog.welcome_cache:
-                saved_channel = self.cog.welcome_cache[self.guild_id].get("channel_id")
-                saved_enabled = self.cog.welcome_cache[self.guild_id].get("is_enabled")
-                self.cog.welcome_cache[self.guild_id] = {
-                    "guild_id": self.guild_id,
-                    "channel_id": saved_channel,
-                    "is_enabled": saved_enabled,
-                    "show_text": 1,
-                    "show_image": 1
-                }
-            self.cog.image_bytes_cache.pop(self.guild_id, None)
-
-            await self.refresh_state()
 
     def build_layout(self):
         self.clear_items()
@@ -279,6 +239,9 @@ class CV2Helper(PrivateLayoutView):
         is_enabled = bool(self.data.get("is_enabled", 0))
         show_text = bool(self.data.get("show_text", 1))
         show_image = bool(self.data.get("show_image", 1))
+
+        chan_id = self.data.get("channel_id")
+        chan_mention = f"<#{chan_id}>" if chan_id else "No channel set."
 
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay("## Welcome Feature Dashboard"))
@@ -290,39 +253,36 @@ class CV2Helper(PrivateLayoutView):
         btn_main.callback = self.toggle_feature
 
         section = discord.ui.Section(
-            discord.ui.TextDisplay(
-                "Configure all settings related to Dopamine's welcome feature. Click the adjacent button to enable or disable the feature."),
+            discord.ui.TextDisplay("Configure all settings related to Dopamine's welcome feature."),
             accessory=btn_main
         )
         container.add_item(section)
 
         if is_enabled:
-            container.add_item(discord.ui.Separator())
 
+            btn_channel = discord.ui.Button(label="Edit Channel", style=discord.ButtonStyle.secondary)
+            btn_channel.callback = self.edit_channel_callback
+
+            container.add_item(discord.ui.Section(
+                discord.ui.TextDisplay(f"Current Destination: {chan_mention}"),
+                accessory=btn_channel
+            ))
+            container.add_item(discord.ui.Separator())
             btn_text_toggle = discord.ui.Button(
                 label=f"{'Enabled' if show_text else 'Disabled'}",
                 style=discord.ButtonStyle.primary if show_text else discord.ButtonStyle.secondary
             )
             btn_text_toggle.callback = self.toggle_text
-
-            section = discord.ui.Section(
-                discord.ui.TextDisplay("### Text"),
-                accessory=btn_text_toggle
-            )
-            container.add_item(section)
+            container.add_item(discord.ui.Section(discord.ui.TextDisplay("### Text"), accessory=btn_text_toggle))
 
             if show_text:
-                btn_text_config = discord.ui.Button(emoji="⚙️", label=f"Customise", style=discord.ButtonStyle.secondary)
+                btn_text_config = discord.ui.Button(emoji="⚙️", label="Customise", style=discord.ButtonStyle.secondary)
                 btn_text_config.callback = self.open_text_modal
-
                 curr_text = self.data.get("custom_message") or "Welcome to **{server.name}**, {member.mention}!"
-
-                section = discord.ui.Section(
-                    discord.ui.TextDisplay(
-                        f"The text part of the welcome message. Click the customise button to customise the format.\n\n* **Current Format:**\n  * ```{curr_text}```\n* **Available Variables:**\n  * `{{member.mention}}` - Mention the member.\n  * `{{member.name}}` - The member's username.\n  * `{{server.name}}` - The name of the server.\n  * `{{position}}` - The position/rank of the member."),
+                container.add_item(discord.ui.Section(
+                    discord.ui.TextDisplay(f"Format:\n```{curr_text}```"),
                     accessory=btn_text_config
-                )
-                container.add_item(section)
+                ))
 
             container.add_item(discord.ui.Separator())
 
@@ -331,37 +291,30 @@ class CV2Helper(PrivateLayoutView):
                 style=discord.ButtonStyle.primary if show_image else discord.ButtonStyle.secondary
             )
             btn_img_toggle.callback = self.toggle_image
-
-            section = discord.ui.Section(
-                discord.ui.TextDisplay("### Welcome Card"),
-                accessory=btn_img_toggle
-            )
-            container.add_item(section)
+            container.add_item(discord.ui.Section(discord.ui.TextDisplay("### Welcome Card"), accessory=btn_img_toggle))
 
             if show_image:
                 btn_img_config = discord.ui.Button(emoji="⚙️", label="Customise", style=discord.ButtonStyle.secondary)
                 btn_img_config.callback = self.open_image_modal
-
-                curr_l1 = self.data.get("image_line1") or "Welcome {member.name}"
-                curr_l2 = self.data.get("image_line2") or "You are our {position} member!"
-                using_custom_img = "Yes" if self.data.get("image_url") else "No"
-
-                section = discord.ui.Section(
-                    discord.ui.TextDisplay(
-                        f"The Welcome Card (image). Use the customise button to provide a custom image URL, or to edit text.\n\n* **Custom Background:** {using_custom_img}\n* **Current Image Text:**\n  * Line 1: `{curr_l1}`\n  * Line 2: `{curr_l2}`\n* **Available Variables:**\n  * `{{member.name}}`, `{{server.name}}`, `{{position}}`"),
+                container.add_item(discord.ui.Section(
+                    discord.ui.TextDisplay("Modify the visual welcome card background and lines."),
                     accessory=btn_img_config
-                )
-                container.add_item(section)
+                ))
 
             container.add_item(discord.ui.Separator())
 
-            container.add_item(discord.ui.TextDisplay("### Reset to Default"))
-
-            btn_reset = discord.ui.Button(label="Reset", style=discord.ButtonStyle.secondary)
-            btn_reset.callback = self.reset_button_callback
+            btn_test = discord.ui.Button(label="Send Test Message", style=discord.ButtonStyle.secondary)
+            btn_test.callback = self.send_test_callback
 
             container.add_item(discord.ui.Section(
-                discord.ui.TextDisplay("Click the Reset button to reset everything to default."),
+                discord.ui.TextDisplay("### Preview\nSend a test message to the configured channel."),
+                accessory=btn_test
+            ))
+
+            btn_reset = discord.ui.Button(label="Reset", style=discord.ButtonStyle.danger)
+            btn_reset.callback = self.reset_button_callback
+            container.add_item(discord.ui.Section(
+                discord.ui.TextDisplay("### Reset\nRevert all customizations to default."),
                 accessory=btn_reset
             ))
 
@@ -451,7 +404,7 @@ class Welcome(commands.Cog):
                             return img
                     except Exception as e:
                         print(f"Error processing custom image for guild {guild_id}: {e}")
-                        # Fallback to default on error
+
 
         return Image.open(WELCOMECARD_PATH).convert("RGBA")
 
@@ -493,7 +446,7 @@ class Welcome(commands.Cog):
             draw = ImageDraw.Draw(mask)
             draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
 
-            avatar_pos = (342 - avatar_size // 2, 101 - avatar_size // 2)
+            avatar_pos = (343 - avatar_size // 2, 102 - avatar_size // 2)
 
             background.paste(avatar, avatar_pos, mask)
 
@@ -559,8 +512,6 @@ class Welcome(commands.Cog):
         except Exception as e:
             print(f"Error sending welcome in {member.guild.name}: {e}")
 
-    welcome_group = app_commands.Group(name="welcome", description="Manage the welcome feature.")
-
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         if member.guild.id in self.member_count_cache:
@@ -569,63 +520,12 @@ class Welcome(commands.Cog):
             if self.member_count_cache[member.guild.id] < 1:
                 self.member_count_cache.pop(member.guild.id)
 
-    @welcome_group.command(name="dashboard", description="Open the welcome feature dashboard.")
+    @app_commands.command(name="welcome", description="Open the welcome feature dashboard.")
     @app_commands.check(slash_mod_check)
     async def welcome_dashboard(self, interaction: discord.Interaction):
         await interaction.response.send_message(
             view=CV2Helper(self, interaction.guild.id, interaction.user)
         )
-
-    @welcome_group.command(name="test", description="Test the welcome message in the configured channel.")
-    @app_commands.check(slash_mod_check)
-    async def welcome_test(self, interaction: discord.Interaction):
-        data = self.welcome_cache.get(interaction.guild.id)
-        if not data or not data.get("channel_id"):
-            await interaction.response.send_message(
-                "The welcome feature is not fully configured (no channel set).",
-                ephemeral=True
-            )
-            return
-
-        channel = interaction.guild.get_channel(data["channel_id"])
-        if not channel:
-            await interaction.response.send_message(
-                "The configured welcome channel no longer exists.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        bot_member = interaction.guild.me
-
-        position = interaction.guild.member_count
-        pos_str = get_ordinal(position)
-
-        content = None
-        file = None
-
-        if data.get("show_text", 1):
-            raw_msg = data.get("custom_message") or "Welcome to **{server.name}**, {member.mention}!"
-            formatted_msg = raw_msg.format(
-                member=bot_member,
-                server=interaction.guild,
-                position=pos_str
-            )
-            content = f"**TEST:** {formatted_msg}"
-
-        if data.get("show_image", 1):
-            file = await self.generate_welcome_card(bot_member, data)
-
-        if not content and not file:
-            await interaction.followup.send("Welcome feature is fully disabled in settings.", ephemeral=True)
-            return
-
-        try:
-            await channel.send(content=content, file=file)
-            await interaction.followup.send(f"Test message sent to {channel.mention}!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send(f"I don't have permission to send messages in {channel.mention}.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
