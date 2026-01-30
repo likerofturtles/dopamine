@@ -178,7 +178,7 @@ class EditPage(PrivateLayoutView):
 
     async def delete_callback(self, interaction: discord.Interaction):
         view = DestructiveConfirmationView(self.user, self.panel_data['title'], self.cog, self.guild_id)
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(view=view)
 
     async def back_callback(self, interaction: discord.Interaction):
         view = ManagePage(self.user, self.cog, self.guild_id)
