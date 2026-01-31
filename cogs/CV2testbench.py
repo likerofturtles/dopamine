@@ -16,57 +16,160 @@ class PrivateLayoutView(discord.ui.LayoutView):
             return False
         return True
 
-class CV2Helper(PrivateLayoutView):
+class RepeatingMessagesDashboard(PrivateLayoutView):
     def __init__(self):
         super().__init__(timeout=None)
         self.build_layout()
 
     def build_layout(self):
         self.clear_items()
+        container = discord.ui.Container()
+        container.add_item(discord.ui.TextDisplay("## Repeating Messages Dashboard"))
+        container.add_item(discord.ui.TextDisplay(
+            "This is the dashboard for Dopamine's Repeating Messages feature. Repeating Messages are repeatedly sent in a channel at a set frequency.\nUse the buttons below to create a new Repeating Message, or to Manage existing ones.")) # Do NOT change this text at all
+        container.add_item(discord.ui.Separator())
 
-        container = discord.ui.Container(accent_color=discord.Color.blue())
+        row = discord.ui.ActionRow()
+        btn_create = discord.ui.Button(label="Create", style=discord.ButtonStyle.primary)
+        btn_create.callback = print() # To be implemented
+        btn_manage = discord.ui.Button(label="Manage & Edit", style=discord.ButtonStyle.secondary)
+        btn_manage.callback = print() # To be implemented, this will edit the message and show the ManagePage.
+        row.add_item(btn_create)
+        row.add_item(btn_manage)
+        container.add_item(row)
+        self.add_item(container)
 
-        container.add_item(discord.ui.TextDisplay("## Welcome Feature Dashboard"))
+class ChannelSelectView(PrivateLayoutView):
+    def __init__(self, user):
+        super().__init__(user, timeout=None)
+        self.build_layout()
 
+    def build_layout(self):
+        container = discord.ui.Container()
 
-        section = discord.ui.Section(
-            discord.ui.TextDisplay("Configure all settings related to Dopamine's welcome feature. Click the adjacent button to enable or disable the feature."),
-            accessory=discord.ui.Button(label=f"{"Welcome Feature Enabled" if 1==1 else "Disabled"}", style=discord.ButtonStyle.primary if 1==1 else discord.ButtonStyle.secondary) # the 1 here is a placeholder for checking whether the feature is enabled or disabled. hope this makes sense.
+        self.select = discord.ui.ChannelSelect(
+            placeholder="Select a channel...",
+            channel_types=[discord.ChannelType.text],
+            min_values=1, max_values=1
         )
-        container.add_item(section)
+        self.select.callback = self.select_callback # To be implemented
 
-        if 1==1: #this is a placeholder. this should only be true (and therefore only be shown) when is_enabled is 1 or true.
+        row = discord.ui.ActionRow()
+        row.add_item(self.select)
+        container.add_item(discord.ui.TextDisplay("### Select a channel for the Repeating Message:"))
+        container.add_item(row)
+        self.add_item(container)
+
+class ManagePage(PrivateLayoutView):
+    def __init__(self):
+        super().__init__( timeout=None)
+        self.build_layout()
+
+    def build_layout(self):
+        self.clear_items()
+        panels = print() # placeholder
+        container = discord.ui.Container()
+        container.add_item(discord.ui.TextDisplay("## Manage Repeating Messages"))
+        container.add_item(discord.ui.TextDisplay(
+            "List of all existing repeating messages. Click Edit to configure details or the channel."))
+        container.add_item(discord.ui.Separator())
+
+        if not panels:
+            container.add_item(discord.ui.TextDisplay("*No Repeating Messages found.*"))
+        else:
+            for idx, panel in enumerate(panels, 1):
+                p_title = panel['name']
+                chan_id = panel['channel_id']
+
+                btn_edit = discord.ui.Button(label="Edit", style=discord.ButtonStyle.secondary)
+                btn_edit.callback = print() # To be implemented, this will send the user to the EditPage for the specific Repeating Message.
+                display_text = f"{idx}. **{p_title}** in <#{chan_id}>"
+                container.add_item(discord.ui.Section(discord.ui.TextDisplay(display_text), accessory=btn_edit))
+                container.add_item(discord.ui.TextDisplay("-# Page [current page number] of [total pages]"))
+
             container.add_item(discord.ui.Separator())
-            section = discord.ui.Section(
-                discord.ui.TextDisplay("### Text"),
-                accessory=discord.ui.Button(label=f"{"Enabled" if 1==1 else "Disabled"}", style=discord.ButtonStyle.primary if 1==1 else discord.ButtonStyle.secondary) # the 1 here is a placeholder for checking whether the feature is enabled or disabled. if the feature is disabled and the user clicks the button, a followup message will be sent containing a discord channel dropdown, where they can select upto 1 channel. hope this makes sense.
-            )
-            if 2==2: #this is a placeholder. this is supposed to be true when is_enabled is set to 1 AND text feature is enabled. or less, we will only show the above header with the enabled/disabled button.
-                container.add_item(section)
-                section = discord.ui.Section(discord.ui.TextDisplay("The text part of the welcome message. Click the customise button to customise the format.\n\n* **Current Format:**\n  * `Welcome to **{server.name}**, {member.mention}!`\n* **Available Variables:**\n  * `{member.mention}` - Mention the member.\n  * `{member.name}` - The member's username.\n  * `{server.name}` - The name of the server.\n  * `{position}` - The position/rank of the member (eg. 'you are are our 156th member')."),
-                                             accessory=discord.ui.Button(emoji="⚙️", label=f"Customise", style=discord.ButtonStyle.secondary)) # this button will open a modal with a big text input field. users dont have to necessarily use one of the avaible variables. only check if a variable is correct if the string includes something with curly braces {}.
-                container.add_item(section)
-            container.add_item(discord.ui.Separator())
-            section = discord.ui.Section(
-                discord.ui.TextDisplay("### Welcome Card"),
-                accessory=discord.ui.Button(label=f"{"Enabled" if 1==1 else "Disabled"}",
-                                            style=discord.ButtonStyle.primary if 1==1 else discord.ButtonStyle.secondary) # the 1 here is a placeholder for checking whether the feature is enabled or disabled. hope this makes sense.
-            )
-            container.add_item(section)
-            if 3==3: #this is a placeholder. this is supposed to be true when welcome card feature is enabled. or less, we will only show the above header with the enabled/disabled button. as an off topic suggestion, this whole container/view should be refreshed upon button clicks so that the hidden sections become visible.
-                section = discord.ui.Section(discord.ui.TextDisplay("The Welcome Card (image) of the welcome message. Use the customise button to provide a custom image URL, or to edit one of the text lines of the image.\n\n* **Current Image:** Using default image/using custom image.\n* **Current Image Text:**\n  * Line 1: `Welcome {member.name}`\n  * Line 2: `You are our 36th member!`\n* **Available Variables for Image Text:**\n  * `{member.name}` - The member's username.\n  * `{server.name}` - The name of the server.\n  * `{position}` - The position/rank of the member (eg. 'you are are our 156th member')"),
-                                             accessory=discord.ui.Button(emoji="⚙️", label="Customise", style=discord.ButtonStyle.secondary)) # this button will open a modal with the following fields that are all optional and left unmodified if left blank: Image URL, line 1, line 2. users dont have to necessarily use one of the available     variables. only check if a variable is correct if the string includes something with curly braces {}.
-                container.add_item(section)
-            container.add_item(discord.ui.Separator())
-            container.add_item(discord.ui.TextDisplay("### Reset to Default"))
-            container.add_item(discord.ui.Section(discord.ui.TextDisplay("Click the Reset button to reset everything to default."), accessory=discord.ui.Button(label="Reset", style=discord.ButtonStyle.secondary))) #when this button is clicked, it will send the "DestructiveConfirmationView" provided below.
+            row = discord.ui.ActionRow() # Paginator system because users may have so many repeating messages that it cant fit into this one container.
+            left_btn = discord.ui.Button(label="Re◀️", style=discord.ButtonStyle.primary)
+            left_btn.callback = print()  # To be implemented
+            row.add_item(left_btn)
+            go_btn = discord.ui.Button(label="Return to Dashboard", style=discord.ButtonStyle.secondary)
+            go_btn.callback = print()  # To be implemented
+            row.add_item(go_btn)
+            right_btn = discord.ui.Button(label="▶️", style=discord.ButtonStyle.primary)
+            right_btn.callback = print()  # To be implemented
+            row.add_item(right_btn)
+            container.add_item(row)
+
+        container.add_item(discord.ui.Separator())
+        row = discord.ui.ActionRow()
+        return_btn = discord.ui.Button(label="Return to Dashboard", style=discord.ButtonStyle.secondary)
+        return_btn.callback = print() # To be implemented
+        row.add_item(return_btn)
+        container.add_item(row)
+        self.add_item(container)
+
+class EditPage(PrivateLayoutView):
+    def __init__(self, user, cog, guild_id, panel_data):
+        super().__init__(user, timeout=None)
+        self.panel_data = panel_data
+        self.build_layout()
+
+    def build_layout(self):
+        self.clear_items()
+        container = discord.ui.Container()
+        container.add_item(discord.ui.TextDisplay(f"## Edit: {['Name']}"))
+        container.add_item(discord.ui.Separator())
+        details = (
+            f"**State:** Active or Inactive with Green or Red circle emoji\n"
+            f"**Channel:** placeholder\n"
+            f"**Frequency:** placeholder\n"
+            f"**Frequency:** `placeholder\n"
+            f"**Message Content:**\n```Message content```"
+        )
+        container.add_item(discord.ui.TextDisplay(details))
+        container.add_item(discord.ui.Separator())
+
+        row1 = discord.ui.ActionRow()
+        btn_state = discord.ui.Button(label=f"Active or Inactive",
+                                     style=discord.ButtonStyle.primary if 1==1 else discord.ButtonStyle.secondary) # 1==1 is placeholder for the toggle
+        btn_state.callback = self.toggle_state_callback # To be implemented
+        btn_edit_message = discord.ui.Button(label="Edit Message Content", style=discord.ButtonStyle.secondary)
+        btn_edit_message.callback = self.edit_message_callback # To be Implemented
+        btn_edit_channel = discord.ui.Button(label="Edit Channel", style=discord.ButtonStyle.secondary)
+        btn_edit_channel.callback = self.edit_channel_callback # To be implemented, this shall send the channel edit select view above.
+        btn_delete = discord.ui.Button(label="Delete", style=discord.ButtonStyle.danger) # Shows the destructive confirmation view.
+        btn_delete.callback = self.delete_callback
+        btn_frequency = discord.ui.Button(label="Edit Frequency", style=discord.ButtonStyle.secondary)
+        btn_frequency.callback = self.edit_duration_callback
+
+        row1.add_item(btn_state)
+        row1.add_item(btn_edit_message)
+        row1.add_item(btn_edit_channel)
+        row1.add_item(btn_frequency)
+        row1.add_item(btn_delete)
+        container.add_item(row1)
+
+        back_row = discord.ui.ActionRow()
+        btn_back = discord.ui.Button(label="Return to Manage Menu", style=discord.ButtonStyle.secondary)
+        btn_back.callback = self.back_callback
+        back_row.add_item(btn_back)
+        container.add_item(back_row)
 
         self.add_item(container)
 
 class DestructiveConfirmationView(PrivateLayoutView):
+    def __init__(self, user, name, cog, guild_id):
+        super().__init__(user, timeout=30)
+        self.name = name
+        self.cog = cog
+        self.guild_id = guild_id
+        self.value = None
+        self.title_text = "Delete Repeating Message"
+        self.body_text = f"Are you sure you want to permanently delete the repeating message **{name}**? This cannot be undone."
+        self.build_layout()
     def build_layout(self):
         self.clear_items()
-        container = discord.ui.Container(accent_color=self.color)
+        container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay(f"### {self.title_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(self.body_text))
@@ -108,7 +211,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
 
     async def on_timeout(self, interaction: discord.Interaction):
         if self.value is None and self.message:
-            await self.update_view(interaction, "Action Confirmed", discord.Color.green())
+            await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
 
 
 class CV2TestCog(commands.Cog):
@@ -117,7 +220,7 @@ class CV2TestCog(commands.Cog):
 
     @app_commands.command(name="cv2test", description="Tests Discord Components V2 layout")
     async def cv2test(self, interaction: discord.Interaction):
-        view = CV2Helper()
+        view = ManagePage()
         await interaction.response.send_message(
             view=view,
         )
