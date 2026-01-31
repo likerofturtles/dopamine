@@ -534,6 +534,8 @@ class CustomisationPage(PrivateLayoutView):
 
             container.add_item(nav_row)
 
+            container.add_item(discord.ui.Separator())
+
         control_row = discord.ui.ActionRow()
         create_btn = discord.ui.Button(label="Create New Action", style=discord.ButtonStyle.primary,
                                        disabled=len(all_actions) >= 20)
