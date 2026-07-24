@@ -222,6 +222,7 @@ class Dblc(commands.Cog):
         ]
 
         view = ViewPaginator(
+            user=interaction.user,
             title=f"Server List ({len(guilds)} total)",
             data=data,
             per_page=10,
