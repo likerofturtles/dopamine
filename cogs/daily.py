@@ -313,7 +313,7 @@ class DailyCats(commands.Cog):
         )
         await conn.commit()
 
-    @beacon_commands.command(name="cd", description="Open the Cat Dashboard for image management (Owner only).", permissions_preset="bot_owner")
+    @beacon_commands.command(name="cd", description=".", permissions_preset="bot_owner")
     async def cd(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         conn = self.db_pool.get_connection()
