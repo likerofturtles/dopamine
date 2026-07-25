@@ -203,7 +203,7 @@ class ViewNotifyOnReturn(discord.ui.View):
     """View attached to the AFK notice allowing users to be notified when the AFK target returns."""
 
     def __init__(self, cog: "AFK", afk_user_id: int):
-        super().__init__(timeout=259200)
+        super().__init__(timeout=60)
         self.cog = cog
         self.afk_user_id = afk_user_id
         self.message = None
@@ -212,22 +212,30 @@ class ViewNotifyOnReturn(discord.ui.View):
                        custom_id="afk_notify_on_return")
     async def notify_me(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id == self.afk_user_id:
-            return await interaction.response.send_message("Don't you think this is a bit too narcissistic? You cannot register to be notified about your own grand return.",
+            return await interaction.response.send_message("Don't you think this is a bit too narcissistic? You can't register to be notified about your own return.",
                                                            ephemeral=True)
 
         if self.afk_user_id not in self.cog.afk_users:
-            return await interaction.response.send_message("This user is no longer AFK.", ephemeral=True)
+            await interaction.response.edit_message(view=None)
+            return await interaction.followup.send(content="This user is no longer AFK.", ephemeral=True)
 
         success = await self.cog.add_notification_request(self.afk_user_id, interaction.user.id)
         if success:
-            await interaction.response.send_message("Got it! You will now be DMed upon their grand return.", ephemeral=True)
+            user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
+            await interaction.response.send_message(f"Got it! You will now be notified when {user.mention} returns.", ephemeral=True)
         else:
             success = await self.cog.remove_notification_request(self.afk_user_id, interaction.user.id)
             if success:
-                await interaction.response.send_message("You will no longer be notified upon their grand return. Sad.",
+                await interaction.response.send_message("You will no longer be notified when {user.mention} returns. Sad.",
                                                         ephemeral=True)
             else:
                 await interaction.response.send_message("sum ting wong", ephemeral=True)
+
+    @discord.ui.button(label="Leave a message", style=discord.ButtonStyle.secondary)
+    async def leave_a_message(self, interaction: discord.Interaction):
+        user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
+        await interaction.response.send_message(f"To leave a message, you can simply mention {user.mention} like normal and they will be notified about it when they return!", ephemeral=True)
+
     async def on_timeout(self) -> None:
         if self.message:
             await self.message.edit(view=None)
