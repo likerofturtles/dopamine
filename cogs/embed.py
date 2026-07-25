@@ -866,6 +866,7 @@ class EmbedPreviewView(PrivateView):
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
+            content=None,
             embed=discord.Embed(title="Embed creation cancelled."),
             view=None,
         )

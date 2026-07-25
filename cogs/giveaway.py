@@ -465,7 +465,7 @@ class GiveawayPreviewView(PrivateView):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
+        await interaction.response.edit_message(content=None, embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
         self.stop()
 
 
