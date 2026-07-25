@@ -226,7 +226,7 @@ class ViewNotifyOnReturn(discord.ui.View):
         else:
             success = await self.cog.remove_notification_request(self.afk_user_id, interaction.user.id)
             if success:
-                await interaction.response.send_message("You will no longer be notified when {user.mention} returns. Sad.",
+                await interaction.response.send_message(f"You will no longer be notified when {user.mention} returns. Sad.",
                                                         ephemeral=True)
             else:
                 await interaction.response.send_message("sum ting wong", ephemeral=True)
