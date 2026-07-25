@@ -845,6 +845,15 @@ class EmbedPreviewView(PrivateView):
         await interaction.response.edit_message(content="## Select the channel where you want the embed to be sent:",
                                                 embed=None, view=view)
 
+    @discord.ui.button(label="Send Without Saving", style=discord.ButtonStyle.secondary)
+    async def send_without_saving_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = ViewChannelSelect(self.cog, self.draft)
+        await interaction.response.edit_message(
+            content="## Select the channel where you want the embed to be sent:",
+            embed=None,
+            view=view
+        )
+
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.primary)
     async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.message = interaction.message
