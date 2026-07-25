@@ -143,8 +143,7 @@ class MaxWithStrapOn(commands.Cog):
                     bg.save(image_binary, 'PNG', optimize=True)
                     image_binary.seek(0)
                     await interaction.followup.send(
-                        file=discord.File(image_binary, filename="maxwithstrapon.png"),
-                        ephemeral=is_ephemeral
+                        file=discord.File(image_binary, filename="maxwithstrapon.png")
                     )
             finally:
                 bg.close()
