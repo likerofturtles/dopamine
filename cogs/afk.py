@@ -232,7 +232,7 @@ class ViewNotifyOnReturn(discord.ui.View):
                 await interaction.response.send_message("sum ting wong", ephemeral=True)
 
     @discord.ui.button(label="Leave a message", style=discord.ButtonStyle.secondary)
-    async def leave_a_message(self, interaction: discord.Interaction):
+    async def leave_a_message(self, interaction: discord.Interaction, button: discord.ui.Button):
         user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
         await interaction.response.send_message(f"To leave a message, you can simply mention {user.mention} like normal and they will be notified about it when they return!", ephemeral=True)
 
