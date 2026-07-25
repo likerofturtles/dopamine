@@ -274,7 +274,7 @@ class DiscordPhone(commands.Cog):
             log_channel = self.bot.get_channel(log_chan_id) if log_chan_id else None
             if log_channel:
                 await log_channel.send(
-                    f" [CONNECT] Connected channel {channel.id} to {partner_chan_id}")
+                    f" [CONNECT] Connect channel {chan_b.name} from {chan_b.guild.name} to {chan_a.name} from {chan_a.guild.name}")
             return True
 
 
@@ -490,7 +490,7 @@ class DiscordPhone(commands.Cog):
         log_channel = self.bot.get_channel(log_chan_id) or await self.bot.fetch_channel(log_chan_id) if log_chan_id else None
         if log_channel:
             await log_channel.send(
-                f" [QUEUE] Channel {interaction.channel.name} from {interaction.guild.name} joined queue.")
+                f" [QUEUE] Channel {interaction.channel.name} from {interaction.guild.name} joined the queue.")
 
         matched = await self.try_match(interaction.channel, interaction.user, interaction)
         if not matched:
@@ -692,7 +692,7 @@ class DiscordPhone(commands.Cog):
         log_chan_id = self.settings_cache.get("log_channel")
         log_channel = self.bot.get_channel(log_chan_id) or await self.bot.fetch_channel(log_chan_id) if log_chan_id else None
         if log_channel:
-            await log_channel.send(f" [QUEUE] Channel {ctx.channel.name} from {ctx.guild.name} joined queue.")
+            await log_channel.send(f" [QUEUE] Channel {ctx.channel.name} from {ctx.guild.name} joined the queue.")
         matched = await self.try_match(ctx.channel, ctx.author, ctx)
         if not matched:
             self.queue.append((ctx.channel.id, ctx.author))
