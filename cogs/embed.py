@@ -598,7 +598,12 @@ class UseEmbedPage(PrivateLayoutView):
     def build_layout(self):
         self.clear_items()
         container = discord.ui.Container()
-        container.add_item(discord.ui.TextDisplay("## Pick an Embed to Use"))
+        refresh_btn = discord.ui.Button(
+            label="Refresh List",
+            style=discord.ButtonStyle.success,
+        )
+        refresh_btn.callback = self.refresh_callback
+        container.add_item(discord.ui.Section(discord.ui.TextDisplay("## Pick an Embed to Use"), accessory=refresh_btn))
         container.add_item(discord.ui.TextDisplay("To create a new embed, use `/embed` -> click Create button."))
         container.add_item(discord.ui.Separator())
 
@@ -664,6 +669,17 @@ class UseEmbedPage(PrivateLayoutView):
             container.add_item(nav_row)
 
         self.add_item(container)
+
+    async def refresh_callback(self, interaction: discord.Interaction):
+        self.embeds = await self.cog.fetch_embeds_for_guild(self.guild_id)
+
+        total_items = len(self.embeds)
+        total_pages = (total_items + self.items_per_page - 1) // self.items_per_page if total_items > 0 else 1
+        if self.page > total_pages:
+            self.page = total_pages
+
+        self.build_layout()
+        await interaction.response.edit_message(view=self)
 
     def make_use_callback(self, record: Dict[str, Any]):
         async def callback(interaction: discord.Interaction):
