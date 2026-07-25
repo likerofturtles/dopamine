@@ -234,7 +234,7 @@ class ViewNotifyOnReturn(discord.ui.View):
     @discord.ui.button(label="Leave a message", style=discord.ButtonStyle.secondary)
     async def leave_a_message(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id == self.afk_user_id:
-            return await interaction.response.send_message("Why would you wanna leave a message for yourself? 🤨 This isn't a notes app... I mean I do support notes, use </note create:1522184511675301990> to create one! But if you really wanna know how to leave a message, just mention the AFK user and I will hand all the missed pings to them when they return.")
+            return await interaction.response.send_message("Why would you wanna leave a message for yourself? 🤨 This isn't a notes app... I mean I do support notes, use </note create:1522184511675301990> to create one! But if you really wanna know how to leave a message, just mention the AFK user and I will hand all the missed pings to them when they return.", ephemeral=True)
         user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
         await interaction.response.send_message(f"To leave a message, you can simply mention {user.mention} like normal and they will be notified about it by me when they return!", ephemeral=True)
 
