@@ -91,9 +91,8 @@ class MaxWithStrapOn(commands.Cog):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
 
-            is_ephemeral = False
 
-            await interaction.response.defer(ephemeral=is_ephemeral)
+            await interaction.response.defer()
 
             bg = self._get_background_image()
 
@@ -120,16 +119,10 @@ class MaxWithStrapOn(commands.Cog):
 
             font_nick, font_username = self._get_fonts()
 
-            if interaction.guild:
-                member = interaction.guild.get_member(user.id) or await interaction.guild.fetch_member(user.id)
-                if member:
-                    nickname = member.display_name
-                else:
-                    nickname = getattr(user, 'global_name', None) or user.display_name
-            else:
-                nickname = getattr(user, 'global_name', None) or user.display_name
 
-            username = str(user)
+            nickname = user.display_name
+
+            username = user.name
 
             draw = ImageDraw.Draw(bg)
 
