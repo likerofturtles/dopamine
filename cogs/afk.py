@@ -220,8 +220,8 @@ class ViewNotifyOnReturn(discord.ui.View):
             return await interaction.followup.send(content="This user is no longer AFK.", ephemeral=True)
 
         success = await self.cog.add_notification_request(self.afk_user_id, interaction.user.id)
+        user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
         if success:
-            user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
             await interaction.response.send_message(f"Got it! You will now be notified when {user.mention} returns.", ephemeral=True)
         else:
             success = await self.cog.remove_notification_request(self.afk_user_id, interaction.user.id)
