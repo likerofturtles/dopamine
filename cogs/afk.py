@@ -128,7 +128,7 @@ class MissedPingsPaginator(discord.ui.View):
 
     async def send_initial(self) -> bool:
         embeds = await self.get_page_embeds()
-        content = f"# {len(self.entries)} Missed Pings"
+        content = f"## {len(self.entries)} Missed Pings"
         try:
             self.message = await self.interaction.user.send(content=content, embeds=embeds, view=self)
             return True
@@ -138,7 +138,7 @@ class MissedPingsPaginator(discord.ui.View):
     async def update_message(self, interaction: discord.Interaction):
         self.update_buttons()
         embeds = await self.get_page_embeds()
-        content = f"# {len(self.entries)} Missed Pings"
+        content = f"## {len(self.entries)} Missed Pings"
         await interaction.response.edit_message(content=content, embeds=embeds, view=self)
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.primary)
