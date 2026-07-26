@@ -316,7 +316,7 @@ class LeaveDashboardView(PrivateLayoutView):
     async def reset_button_callback(self, interaction: discord.Interaction):
         view = DestructiveConfirmationView(
             user=interaction.user,
-            title_text="Reset Leave Settings?",
+            title_text="Reset Goodbye Settings?",
             body_text="This will delete all custom text, images, and configurations. The feature will remain enabled if it is currently enabled."
         )
         await interaction.response.send_message(view=view)
