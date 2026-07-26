@@ -271,7 +271,7 @@ class WelcomeDashboardView(PrivateLayoutView):
 
                 curr_l1 = self.data.get("image_line1") or "Welcome {member.name}"
                 curr_l2 = self.data.get("image_line2") or "You are our {position} member!"
-                using_custom_img = "Yes" if self.data.get("image_url") else "No"
+                using_custom_img = "Yes" if self.data.get("local_image_path") else "No"
                 curr_color = self.data.get("embed_color") or "#FFFFFF"
                 section = discord.ui.Section(
                     discord.ui.TextDisplay(
