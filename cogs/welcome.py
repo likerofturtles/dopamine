@@ -453,7 +453,7 @@ class WelcomeDashboardView(PrivateLayoutView):
             title_text="Reset Welcome Settings?",
             body_text="This will delete all custom text, images, and configurations. The feature will remain enabled if it is currently enabled."
         )
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(view=view)
         await view.wait()
 
         if view.value:
