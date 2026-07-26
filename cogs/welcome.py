@@ -130,7 +130,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
 
         is_disabled = self.value is not None
         action_row = discord.ui.ActionRow()
-        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.gra, disabled=is_disabled)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.gray, disabled=is_disabled)
         confirm = discord.ui.Button(label="Reset to Default", style=discord.ButtonStyle.red, disabled=is_disabled)
 
         cancel.callback = self.cancel_callback
