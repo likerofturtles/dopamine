@@ -2393,10 +2393,18 @@ class Giveaways(commands.Cog):
             if g[3] == 0:
                 return await interaction.response.send_message(
                     "This giveaway hasn't ended yet! You can't reroll active giveaways.")
-
+        line2 = None
+        if preserve_winners and g[1]:
+            line2 = "Preserve old winners and their winner roles"
+        elif preserve_winners and not g[1]:
+            line2 = "Preserve old winners"
+        elif not preserve_winners and g[1]:
+            line2 = f"Override **{winners}** old winners and remove their winner roles"
+        elif not preserve_winners and not g[1]:
+            line2 = f"Override **{winners}** old winners"
         body_content = (f"Are you sure you want to:\n"
                         f"* Re-roll this giveaway to pick **{winners}** new winners\n"
-                        f"* {'Preserve old winners and their roles' if preserve_winners else f'override **{winners}** old winners and remove their winner role'}\n"
+                        f"* {line2}\n"
                         f"{f'* Give **{winners}** the winner role' if g[1] else ''}")
 
         view = ConfirmationViewOld("Pending Confirmation", body_content, interaction.user)
@@ -2487,7 +2495,7 @@ class Giveaways(commands.Cog):
                 mention_str = ", ".join([f"<@{w}>" for w in new_picks])
                 mode_text = "added to the pool of winners" if preserve_winners else "selected as the new winners"
                 await channel.send(
-                    f"🎉 Congratulations to: {mention_str} for being {mode_text} for **{g[0]}**!\n\nThis giveaway has been re-rolled by {interaction.user.mention}")
+                    f"🎉 Congratulations to: {mention_str} for being {mode_text} for **{g[0]}**!\nThis giveaway has been re-rolled by {interaction.user.mention}.")
 
     @giveaway_reroll.autocomplete("giveaway_id")
     async def reroll_autocomplete(self, interaction: discord.Interaction, current: str):
