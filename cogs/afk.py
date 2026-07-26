@@ -694,7 +694,6 @@ class AFK(commands.Cog):
                                        string_for_after_missed_pings_clear) if missed and state.save_missed_pings else None
 
                 try:
-
                     if view:
                         msg = await message.reply(content, view=view, mention_author=False)
                         view.message = msg
@@ -741,38 +740,6 @@ class AFK(commands.Cog):
                 notify_view.message = msg
             except (discord.Forbidden, discord.HTTPException):
                 pass
-
-        if message.role_mentions:
-            for role in message.role_mentions:
-                for uid, state in list(self.afk_users.items()):
-                    if await self._maybe_cleanup_if_expired(uid, state):
-                        continue
-
-                    if not self._is_afk_active_in_context(state, message.guild):
-                        continue
-
-                    member = message.guild.get_member(uid) or await message.guild.fetch_member(uid)
-                    if not member or role not in member.roles:
-                        continue
-
-                    await self._store_missed_ping(
-                        user_id=uid,
-                        author_id=message.author.id,
-                        guild_id=message.guild.id,
-                        channel_id=message.channel.id,
-                        message_id=message.id,
-                        content=message.content or "*No message content*",
-                        timestamp=int(message.created_at.timestamp()),
-                    )
-
-                    if len(role.members) <= 3:
-                        notice = self._format_afk_notice(member, state)
-                        try:
-                            notify_view = ViewNotifyOnReturn(self, member.id)
-                            msg = await message.channel.send(notice, view=notify_view)
-                            notify_view.message = msg
-                        except (discord.Forbidden, discord.HTTPException):
-                            pass
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):
