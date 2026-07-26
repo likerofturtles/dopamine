@@ -2437,10 +2437,8 @@ class Giveaways(commands.Cog):
                     if g[1]:
                         role = interaction.guild.get_role(g[1])
                         if not role:
-                            role = interaction.guild.fetch_role(g[1])
-                        if not role:
-                            await interaction.followup_send(
-                                "I can't find the role to remove from the previous winners!", ephemeral=True)
+                            role = await interaction.guild.fetch_role(g[1])
+
                         if role:
                             for chunk in chunk_list(self, prev_winners, 5):
                                 for old_uid in chunk:
@@ -2452,8 +2450,8 @@ class Giveaways(commands.Cog):
                                         except discord.HTTPException:
                                             pass
                                 await asyncio.sleep(1.5)
-                    await db.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ? AND user_id = ?",
-                                     (giveaway_id, old_uid))
+
+                    await db.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ?", (giveaway_id,))
 
                 for new_uid in new_picks:
                     await db.execute("INSERT INTO giveaway_winners (giveaway_id, user_id) VALUES (?, ?)",
