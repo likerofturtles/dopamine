@@ -3033,7 +3033,7 @@ class Moderation(commands.Cog):
         view = CaseUserHistoryPage(
             interaction.user, self, interaction.guild, user.id, cases, term
         )
-        await interaction.response.send_message(view=view)
+        await interaction.edit_original_response(view=view)
         view.message = await interaction.original_response()
 
     @case_group.command(name="view", description="View a specific moderation case by ID.")
