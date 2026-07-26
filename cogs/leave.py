@@ -444,7 +444,7 @@ class LeaveDashboardView(PrivateLayoutView):
                 curr_color = self.data.get("embed_color") or "#FFFFFF"
                 section = discord.ui.Section(
                     discord.ui.TextDisplay(
-                        f"The Leave Card (image). Use the customise button to provide a custom image URL, or to edit text.\n\n* **Custom Background:** {using_custom_img}\n* **Current Image Text:**\n  * Line 1: `{curr_l1}`\n  * Line 2: `{curr_l2}`\n* **Text Colour:** {curr_color}\n* **Available Variables:**\n  * `{{member.name}}`, `{{server.name}}`, and others available in Discord member or server/guild objects."),
+                        f"The Goodbye Card (image). Use the customise button to upload a custom image, or to edit text.\n\n* **Custom Background:** {using_custom_img}\n* **Current Image Text:**\n  * Line 1: `{curr_l1}`\n  * Line 2: `{curr_l2}`\n* **Text Colour:** {curr_color}\n* **Available Variables:**\n  * `{{member.name}}`, `{{server.name}}`, and others available in Discord member or server/guild objects."),
                     accessory=btn_img_config
                 )
                 container.add_item(section)
