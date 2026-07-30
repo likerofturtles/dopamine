@@ -614,7 +614,8 @@ class Leaves(commands.Cog):
             print(f"Error processing Background: {e}")
             return pyvips.Image.new_from_file(LEAVECARD_PATH).thumbnail_image(686, height=291, crop="centre")
 
-    def generate_leave_card(self, member: discord.User, data: dict, guild: discord.Guild, avatar_bytes: Optional[bytes]) -> discord.File:
+    def generate_leave_card(self, member: discord.User, data: dict, guild: discord.Guild,
+                            avatar_bytes: Optional[bytes]) -> discord.File:
         guild_id = guild.id
         local_path = data.get("local_image_path")
 
@@ -632,24 +633,54 @@ class Leaves(commands.Cog):
             base_img = base_img.addalpha()
 
         avatar_size = 100
+        avatar_radius = avatar_size // 2
+
+        card_width = 686
+        x_pos = (card_width - avatar_size) // 2
+        y_pos = 102 - avatar_radius
 
         if avatar_bytes:
-            avatar = pyvips.Image.new_from_buffer(avatar_bytes, "").thumbnail_image(avatar_size, height=avatar_size,
-                                                                                    crop="centre")
+            if not local_path:
+                ring_offset = 5
+                ring_thickness = 4
+                outer_radius = avatar_radius + ring_offset
+                inner_radius = outer_radius - ring_thickness
+
+                ring_box_size = outer_radius * 2
+                ring_center = outer_radius
+
+                ring_mask = pyvips.Image.black(ring_box_size, ring_box_size)
+                ring_mask = ring_mask.draw_circle(255, ring_center, ring_center, outer_radius - 1, fill=True)
+
+                inner_mask = pyvips.Image.black(ring_box_size, ring_box_size)
+                inner_mask = inner_mask.draw_circle(255, ring_center, ring_center, inner_radius - 1, fill=True)
+                ring_alpha = ring_mask - inner_mask
+
+                ring_color_rgba = [127, 37, 201, 255]
+                ring_colored = pyvips.Image.new_from_image(ring_mask, ring_color_rgba[:3]).copy(interpretation="srgb")
+                ring_colored = ring_colored.bandjoin((ring_alpha / 255) * ring_color_rgba[3])
+
+                ring_x = (card_width - ring_box_size) // 2
+                ring_y = 102 - ring_center
+                base_img = base_img.composite2(ring_colored, 'over', x=ring_x, y=ring_y)
+
+            avatar = pyvips.Image.new_from_buffer(avatar_bytes, "").thumbnail_image(
+                avatar_size, height=avatar_size, crop="centre"
+            )
             if not avatar.hasalpha():
                 avatar = avatar.addalpha()
 
             mask = pyvips.Image.black(avatar_size, avatar_size)
-            mask = mask.draw_circle(255, avatar_size // 2, avatar_size // 2, (avatar_size // 2) - 1, fill=True)
+            mask = mask.draw_circle(255, avatar_radius, avatar_radius, avatar_radius - 1, fill=True)
             mask = mask.gaussblur(0.7)
 
             original_alpha = avatar.extract_band(avatar.bands - 1)
             final_alpha = (original_alpha / 255) * (mask / 255) * 255
             avatar = avatar.extract_band(0, n=3).bandjoin(final_alpha)
 
-            base_img = base_img.composite2(avatar, 'over', x=343 - (avatar_size // 2), y=102 - (avatar_size // 2))
+            base_img = base_img.composite2(avatar, 'over', x=x_pos, y=y_pos)
 
-        def draw_centered_text(base, text, size, y_pos, font_name, weight, color_rgb):
+        def draw_centered_text(base, text, size, y_pos_text, font_name, weight, color_rgb):
             max_width = 638
             min_size = 10
 
@@ -665,10 +696,10 @@ class Leaves(commands.Cog):
                 f'<span font_family="{font_name}" weight="{weight}" size="{size * 1024}">{text}</span>'
             )
 
-            x_pos = (686 - mask.width) // 2
+            text_x_pos = (card_width - mask.width) // 2
             white_text = mask.new_from_image(color_rgb).copy(interpretation="srgb")
             text_img = white_text.bandjoin(mask)
-            return base.composite2(text_img, 'over', x=x_pos, y=y_pos)
+            return base.composite2(text_img, 'over', x=text_x_pos, y=y_pos_text)
 
         base_img = draw_centered_text(base_img, line1_text, 24, 178, font_name="gg sans", weight="Bold", color_rgb=rgb)
         base_img = draw_centered_text(base_img, line2_text, 22, 223, font_name="gg sans Medium", weight="Normal",
