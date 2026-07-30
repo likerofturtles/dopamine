@@ -10,6 +10,7 @@ from collections import deque
 from beacon import beacon_commands
 from utils.log import LoggingManager
 import datetime
+import asyncio
 
 class Dblc(commands.Cog):
     def __init__(self, bot):
@@ -49,11 +50,9 @@ class Dblc(commands.Cog):
             if not raw_messages:
                 return await interaction.edit_original_response(content="No messages found to delete.")
 
-            # 2. Calculate the 14-day threshold timestamp
             now = datetime.datetime.now(datetime.timezone.utc)
             fourteen_days_ago = now - datetime.timedelta(days=14)
 
-            # 3. Filter messages younger than 14 days
             valid_messages = [msg for msg in raw_messages if msg.created_at > fourteen_days_ago]
 
             if not valid_messages:
@@ -83,6 +82,67 @@ class Dblc(commands.Cog):
             await log_ch.send(embed=log_embed)
 
         await interaction.edit_original_response(content=f"Successfully purged **{deleted_count}** message(s).")
+
+    @beacon_commands.command(
+        name="dp",
+        description=".",
+        permissions_preset="bot_owner"
+    )
+    @app_commands.describe(
+        number="Number of messages to purge (max 6769)"
+    )
+    async def deep_purge(self, interaction: discord.Interaction, number: int):
+        number = max(1, min(number, 6769))
+        delay = 0.35
+
+        await interaction.response.defer(ephemeral=True)
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        fourteen_days_ago = now - datetime.timedelta(days=14)
+
+        raw_messages = [msg async for msg in interaction.channel.history(limit=number)]
+
+        if not raw_messages:
+            return await interaction.edit_original_response(content="No messages found to purge.")
+
+        old_messages = [msg for msg in raw_messages if msg.created_at <= fourteen_days_ago]
+
+        if not old_messages:
+            return await interaction.edit_original_response(
+                content="No messages older than 14 days were found in the requested range."
+            )
+
+        deleted_count = 0
+        failed_count = 0
+
+        await interaction.edit_original_response(
+            content=f"Found **{len(old_messages)}** message(s) older than 14 days. Beginning purge..."
+        )
+
+        for msg in old_messages:
+            try:
+                await msg.delete()
+                deleted_count += 1
+            except discord.Forbidden:
+                failed_count += 1
+            except discord.NotFound:
+                continue
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', 2.0)
+                    await asyncio.sleep(retry_after)
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                    except Exception:
+                        failed_count += 1
+                else:
+                    failed_count += 1
+
+            await asyncio.sleep(max(0.1, delay))
+
+        status_msg = f"Completed purge!\n* **Successfully deleted:** `{deleted_count}`\n* **Failed:** `{failed_count}`"
+        await interaction.edit_original_response(content=status_msg)
 
     @beacon_commands.command(name="ban", description="Fake-ban someone (cosmetic).")
     @app_commands.describe(member="Who to fake-ban", duration="How long (text)", reason="Optional reason")
