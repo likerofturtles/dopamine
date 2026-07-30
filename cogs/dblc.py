@@ -9,6 +9,7 @@ import os
 from collections import deque
 from beacon import beacon_commands
 from utils.log import LoggingManager
+import datetime
 
 class Dblc(commands.Cog):
     def __init__(self, bot):
@@ -35,31 +36,39 @@ class Dblc(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @beacon_commands.command(name="purge", description="Delete recent messages.", permissions_preset="support")
-    @app_commands.describe(number="Number of messages to delete (max 100)", reason="An optional reason for this message purge")
+    @app_commands.describe(number="Number of messages to delete (max 100)",
+                           reason="An optional reason for this message purge")
     async def purge(self, interaction: discord.Interaction, number: int, reason: str | None = None):
         number = max(1, min(number, 100))
 
         await interaction.response.defer(ephemeral=True)
 
         try:
+            raw_messages = [msg async for msg in interaction.channel.history(limit=number)]
 
-            messages = [msg async for msg in interaction.channel.history(limit=number)]
+            if not raw_messages:
+                return await interaction.edit_original_response(content="No messages found to delete.")
 
-            if not messages:
-                return await interaction.edit_original_response("No messages found to delete.", ephemeral=True)
+            # 2. Calculate the 14-day threshold timestamp
+            now = datetime.datetime.now(datetime.timezone.utc)
+            fourteen_days_ago = now - datetime.timedelta(days=14)
 
-            await interaction.channel.delete_messages(messages)
-            deleted_count = len(messages)
+            # 3. Filter messages younger than 14 days
+            valid_messages = [msg for msg in raw_messages if msg.created_at > fourteen_days_ago]
+
+            if not valid_messages:
+                return await interaction.edit_original_response(
+                    content="Cannot delete messages older than 14 days."
+                )
+
+            await interaction.channel.delete_messages(valid_messages)
+            deleted_count = len(valid_messages)
 
         except discord.Forbidden:
-            return await interaction.edit_original_response("I don't have permission to delete messages here.", ephemeral=True)
+            return await interaction.edit_original_response(content="I don't have permission to delete messages here.")
         except discord.HTTPException as e:
-            if e.code == 50034:
-                return await interaction.edit_original_response(
-                    "Cannot delete messages older than 14 days using bulk delete.",
-                    ephemeral=True
-                )
-            return await interaction.edit_original_response(f"An error occurred: {e}", ephemeral=True)
+            return await interaction.edit_original_response(content=f"An error occurred: {e}")
+
         channel_id = await self.manager.log_get(interaction.guild.id)
         log_ch = None
         if channel_id:
