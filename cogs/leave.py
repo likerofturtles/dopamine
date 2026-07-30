@@ -641,7 +641,7 @@ class Leaves(commands.Cog):
 
         if avatar_bytes:
             if not local_path:
-                ring_offset = 5
+                ring_offset = 10
                 ring_thickness = 4
                 outer_radius = avatar_radius + ring_offset
                 inner_radius = outer_radius - ring_thickness
