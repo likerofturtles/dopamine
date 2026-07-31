@@ -121,7 +121,7 @@ class MissedPingsPaginator(discord.ui.View):
 
             embed.description = f"{jump_link}\n{content}"
             embed.set_footer(text=f"in {guild.name if guild else 'Unknown Server'}")
-            embed.timestamp = datetime.datetime.fromtimestamp(entry.timestamp, tz=datetime.timezone.utc).replace(tzinfo=None)
+            embed.timestamp = datetime.datetime.fromtimestamp(entry.timestamp, tz=datetime.timezone.utc)
             embeds.append(embed)
 
         return embeds
