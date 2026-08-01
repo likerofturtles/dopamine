@@ -119,9 +119,25 @@ class Embeds(commands.Cog):
 
     def build_embed_from_draft(self, draft: EmbedDraft) -> discord.Embed:
         color = self._parse_color(draft.color)
+
+        has_other_components = any([
+            bool(draft.title and draft.title.strip()),
+            bool(draft.author_name and draft.author_name.strip()),
+            bool(draft.image_url and draft.image_url.strip()),
+            bool(draft.thumbnail_url and draft.thumbnail_url.strip()),
+            bool(draft.footer_text and draft.footer_text.strip()),
+        ])
+
+        if draft.description and draft.description.strip():
+            description = draft.description
+        elif not has_other_components:
+            description = "Add a title, description, author name, image, thumbnail, or footer"
+        else:
+            description = None
+
         embed = discord.Embed(
             title=draft.title or None,
-            description=draft.description or "Add a description",
+            description=description,
             color=color,
         )
         if draft.url:
@@ -140,7 +156,7 @@ class Embeds(commands.Cog):
 
         if draft.author_name or draft.author_icon_url:
             embed.set_author(
-                name=draft.author_name or discord.Embed.Empty,
+                name=draft.author_name or "Author name is required since you set an author image URL",
                 icon_url=draft.author_icon_url or None,
             )
 
@@ -509,7 +525,6 @@ class ManageEmbedPage(PrivateLayoutView):
                 draft = self.cog.build_draft_from_row(record)
                 preview_embed = self.cog.build_embed_from_draft(draft)
 
-
                 expires_ts = get_now_plus_seconds_unix(1800)
                 view = EmbedPreviewView(self.cog, self.user, draft, existing_id=embed_id, parent_view=self,
                                         expires_ts=expires_ts)
@@ -814,6 +829,23 @@ class EmbedPreviewView(PrivateView):
         self.parent_view = parent_view
         self.expires_ts = expires_ts
         self.message: Optional[discord.Message] = None
+        self.update_button_states()
+
+    def _has_valid_content(self) -> bool:
+        return any([
+            bool(self.draft.title and self.draft.title.strip()),
+            bool(self.draft.description and self.draft.description.strip()),
+            bool(self.draft.author_name and self.draft.author_name.strip()),
+            bool(self.draft.image_url and self.draft.image_url.strip()),
+            bool(self.draft.thumbnail_url and self.draft.thumbnail_url.strip()),
+            bool(self.draft.footer_text and self.draft.footer_text.strip()),
+        ])
+
+    def update_button_states(self):
+        is_valid = self._has_valid_content()
+        self.save_button.disabled = not is_valid
+        self.save_and_send_button.disabled = not is_valid
+        self.send_without_saving_button.disabled = not is_valid
 
     def get_formatted_content(self) -> str:
         prefix = (
@@ -1021,11 +1053,13 @@ class EmbedEditSelect(discord.ui.Select):
 
         if value == "timestamp":
             self.draft.timestamp_enabled = not self.draft.timestamp_enabled
+            self.parent_view.update_button_states()
             new_embed = self.cog.build_embed_from_draft(self.draft)
 
             await self.parent_view.message.edit(
                 content=self.parent_view.get_formatted_content(),
-                embed=new_embed
+                embed=new_embed,
+                view=self.parent_view,
             )
             state = "enabled" if self.draft.timestamp_enabled else "disabled"
             return await interaction.response.send_message(
@@ -1095,7 +1129,7 @@ class EmbedFieldModal(discord.ui.Modal):
         else:
             self.input_field = discord.ui.TextInput(
                 label=f"Enter value",
-                           placeholder="Type here...",
+                placeholder="Type here...",
                 default=current_value,
                 required=False,
             )
@@ -1127,11 +1161,13 @@ class EmbedFieldModal(discord.ui.Modal):
         elif self.trait == "author_icon_url":
             self.draft.author_icon_url = value
 
+        self.parent_view.update_button_states()
         new_embed = self.parent_view.cog.build_embed_from_draft(self.draft)
 
         await self.parent_view.message.edit(
             content=self.parent_view.get_formatted_content(),
             embed=new_embed,
+            view=self.parent_view,
         )
 
         pretty = self.trait.replace("_", " ").title()
