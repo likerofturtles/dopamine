@@ -1,11 +1,14 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import aiosqlite
 import asyncio
 import contextlib
-from config import BAN_PATH
+
+import aiosqlite
+import discord
 from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
+
+from config import BAN_PATH
+
 
 class BanningCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

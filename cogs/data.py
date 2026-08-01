@@ -13,10 +13,9 @@ from typing import Any, Optional
 
 import aiosqlite
 import discord
+from beacon import beacon_commands, PrivateLayoutView
 from discord.ext import commands, tasks
 
-from beacon import beacon_commands, PrivateLayoutView
-from config import BACKUP_DIR, DATABASES_DIR, DATADB_PATH
 from VERSION import bot_version
 from cogs.data_views import (
     DataHome,
@@ -24,6 +23,7 @@ from cogs.data_views import (
     InsightsDashboard,
     RemovalFeedbackView,
 )
+from config import BACKUP_DIR, DATABASES_DIR, DATADB_PATH
 from utils.data_backup import (
     backup_databases_to_staging,
     build_backup_zip,

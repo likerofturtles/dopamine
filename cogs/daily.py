@@ -1,17 +1,13 @@
 import asyncio
 import io
-import logging
 import random
-import aiosqlite
 from datetime import datetime, timedelta, time
-import json
 
+import aiosqlite
 import discord
-from beacon.core.preconditions import permissions_preset
-from discord import app_commands, Interaction, TextChannel
-from discord.ext import commands, tasks
 from beacon import beacon_commands
-from discord.ui import file_upload
+from discord import app_commands, Interaction
+from discord.ext import commands, tasks
 
 from config import DDB_PATH
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult

@@ -1,22 +1,22 @@
+import asyncio
+import random
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Set, Any
-import discord
-from discord import app_commands, Interaction
-from discord.ext import commands, tasks
-import random
-import asyncio
-import aiosqlite
 from datetime import datetime, timezone
-from discord.ui import TextDisplay
+from typing import Optional, List, Dict, Set
+
+import aiosqlite
+import discord
 from beacon import PrivateLayoutView, PrivateView, beacon_commands
+from discord import app_commands
+from discord.ext import commands, tasks
+from natsort import natsorted, ns
 
 from config import GDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
 from utils.time import get_duration_to_seconds, get_now_plus_seconds_unix
-from natsort import natsorted, ns
 
 ADJECTIVES = ["alpha", "beta", "delta", "sonic", "prime", "global", "pivot", "solid", "static", "linear", "vital", "core", "urban", "nomad"]
 NOUNS = ["node", "link", "point", "base", "grid", "zone", "unit", "flux", "pillar", "vector", "path", "shift", "pulse", "forge"]

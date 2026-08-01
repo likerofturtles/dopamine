@@ -1,11 +1,14 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
-from config import MAX_PATH, FONT_PATH
 from typing import Optional
+
+import discord
+from PIL import Image, ImageDraw, ImageFont
 from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
+
+from config import MAX_PATH, FONT_PATH
+
 
 class MaxWithStrapOn(commands.Cog):
     def __init__(self, bot):

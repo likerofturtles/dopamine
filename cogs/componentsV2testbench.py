@@ -1,7 +1,8 @@
 import discord
-from discord.ext import commands
-from discord import app_commands
 from beacon import PrivateLayoutView
+from discord import app_commands
+from discord.ext import commands
+
 
 class BirthdayDashboard(PrivateLayoutView):
     def __init__(self, user):

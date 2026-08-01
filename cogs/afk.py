@@ -1,19 +1,19 @@
 import asyncio
+import datetime
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Set, Any, AsyncGenerator
+from typing import Dict, List, Optional, Set, Any, AsyncGenerator
 
 import aiosqlite
 import discord
 from aiosqlite import Connection
+from beacon import PrivateView
 from discord import app_commands
 from discord.ext import commands
 
 from config import AFKDB_PATH
-from beacon import ViewPaginator, PrivateView
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
-import datetime
 
 AFK_BUFFER_SECONDS = 30
 AFK_MAX_SECONDS = 72 * 60 * 60

@@ -1,14 +1,15 @@
-import discord
 import importlib
-import config
-import VERSION
-from beacon import beacon_commands
-import beacon
-from discord import app_commands
-from discord.ext import commands
-from dotenv import load_dotenv, set_key
 import os
 import sys
+
+import beacon
+import discord
+from beacon import beacon_commands
+from discord.ext import commands
+from dotenv import load_dotenv, set_key
+
+import VERSION
+import config
 
 
 class Reload(commands.Cog):

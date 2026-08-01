@@ -1,13 +1,16 @@
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-import aiosqlite
 import asyncio
 import datetime
 import time
-from config import SPDB_PATH
+
+import aiosqlite
+import discord
 from beacon import PrivateLayoutView, beacon_commands, preconditions
+from discord import app_commands
+from discord.ext import commands, tasks
+
+from config import SPDB_PATH
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
+
 
 class ConfirmationView(PrivateLayoutView):
     def __init__(self, user, cog, title_text: str, body_text: str):

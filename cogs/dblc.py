@@ -1,16 +1,19 @@
+import asyncio
+import datetime
 import importlib
-import discord
-from discord import app_commands
-from discord.ext import commands, tasks
-from beacon import ViewPaginator
-import VERSION
-import psutil
 import os
 from collections import deque
+
+import discord
+import psutil
+from beacon import ViewPaginator
 from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
+
+import VERSION
 from utils.log import LoggingManager
-import datetime
-import asyncio
+
 
 class Dblc(commands.Cog):
     def __init__(self, bot):

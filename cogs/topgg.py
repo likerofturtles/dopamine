@@ -1,13 +1,14 @@
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from typing import Optional, Dict
+
+import aiohttp
+import aiosqlite
 import discord
 from discord.ext import commands
-import aiosqlite
-import asyncio
-import aiohttp
-from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
-from typing import Optional, Dict, Tuple, Set
+
 from config import TOPDB_PATH, TOPGG_API_URL, TOPGG_TOKEN
-from config import OVERRIDE_VOTEWALL
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 

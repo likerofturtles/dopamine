@@ -5,10 +5,9 @@ from typing import Optional, List, Dict, Any
 
 import aiosqlite
 import discord
-from discord import app_commands
+from beacon import PrivateLayoutView, PrivateView, beacon_commands
 from discord.ext import commands
 
-from beacon import PrivateLayoutView, PrivateView, beacon_commands
 from config import EDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult

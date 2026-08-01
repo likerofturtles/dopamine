@@ -1,15 +1,15 @@
-import discord
-import aiosqlite
 import asyncio
-import logging
-from discord.ext import commands
+import collections
+from typing import Set
+
+import aiosqlite
+import discord
+from beacon import beacon_commands
 from discord import app_commands
-from typing import List, Set
+from discord.ext import commands
 
 from config import APDB_PATH
 
-from beacon import beacon_commands
-import collections
 
 class ConnectionPool:
 
