@@ -16,6 +16,9 @@ import pyvips
 import ctypes
 from pathlib import Path
 
+if not hasattr(discord, "RadioGroupOption") and hasattr(discord.ui, "RadioGroupOption"):
+    discord.RadioGroupOption = discord.ui.RadioGroupOption
+
 try:
     fontconfig = ctypes.CDLL("libfontconfig.so.1")
 except OSError:
@@ -55,12 +58,23 @@ class LeaveTextModal(discord.ui.Modal, title="Customise Leave Text"):
         await self.callback_func(interaction, self.message.value)
 
 
-class LeaveImageModal(discord.ui.Modal, title="Customise Goodbye Card"):
-    def __init__(self, data: dict, callback_func):
+class LeaveBackgroundModal(discord.ui.Modal, title="Customise Background"):
+    def __init__(self, callback_func):
         super().__init__()
         self.background_file = discord.ui.FileUpload(
             required=False
         )
+        self.callback_func = callback_func
+        self.add_item(discord.ui.Label(text="Upload Background Image", component=self.background_file))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        uploaded_attachment = self.background_file.values[0] if self.background_file.values else None
+        await self.callback_func(interaction, uploaded_attachment)
+
+
+class LeaveImageModal(discord.ui.Modal, title="Customise Card Text"):
+    def __init__(self, data: dict, callback_func):
+        super().__init__()
         self.line1 = discord.ui.TextInput(
             placeholder="Type here...",
             required=False,
@@ -76,14 +90,41 @@ class LeaveImageModal(discord.ui.Modal, title="Customise Goodbye Card"):
             required=False,
             max_length=7
         )
+
+        bg_opacity_val = str(data.get("text_bg_opacity") or "none").lower()
+        text_border_val = str(data.get("text_border") or "none").lower()
+
+        self.bg_opacity = discord.ui.RadioGroup(
+            options=[
+                discord.RadioGroupOption(label="None", value="none", default=(bg_opacity_val == "none")),
+                discord.RadioGroupOption(label="25% Opacity", value="25", default=("25" in bg_opacity_val)),
+                discord.RadioGroupOption(label="50% Opacity", value="50", default=("50" in bg_opacity_val)),
+                discord.RadioGroupOption(label="75% Opacity", value="75", default=("75" in bg_opacity_val)),
+                discord.RadioGroupOption(label="Blurred Background", value="blur", default=(bg_opacity_val == "blur"))
+            ],
+            required=True
+        )
+
+        self.text_border = discord.ui.RadioGroup(
+            options=[
+                discord.RadioGroupOption(label="None", value="none", default=(text_border_val == "none")),
+                discord.RadioGroupOption(label="White Border", value="white", default=(text_border_val == "white")),
+                discord.RadioGroupOption(label="Black Border", value="black", default=(text_border_val == "black")),
+                discord.RadioGroupOption(label="Opposite Border", value="opposite", default=(text_border_val == "opposite"))
+            ],
+            required=True
+        )
+
         self.callback_func = callback_func
         self.line1.default = data.get("image_line1") or "Goodbye {member.display_name}"
         self.line2.default = data.get("image_line2") or "We hope to see you again!"
         self.text_color.default = data.get("embed_color") or "#FFFFFF"
-        self.add_item(discord.ui.Label(text="Upload Background Image", component=self.background_file))
+
         self.add_item(discord.ui.Label(text="Line 1 Text (Big)", component=self.line1))
         self.add_item(discord.ui.Label(text="Line 2 Text (Small)", component=self.line2))
         self.add_item(discord.ui.Label(text="Text Hex Colour", component=self.text_color))
+        self.add_item(discord.ui.Label(text="Text Background", component=self.bg_opacity))
+        self.add_item(discord.ui.Label(text="Text Border", component=self.text_border))
 
     async def on_submit(self, interaction: discord.Interaction):
         color_val = self.text_color.value.strip()
@@ -98,8 +139,24 @@ class LeaveImageModal(discord.ui.Modal, title="Customise Goodbye Card"):
         if color_val and not color_val.startswith("#"):
             color_val = f"#{color_val}"
 
-        uploaded_attachment = self.background_file.values[0] if self.background_file.values else None
-        await self.callback_func(interaction, uploaded_attachment, self.line1.value, self.line2.value, color_val)
+        def extract_value(comp, default="none"):
+            if hasattr(comp, "value") and comp.value:
+                return comp.value
+            if hasattr(comp, "values") and comp.values:
+                return comp.values[0]
+            return default
+
+        bg_opacity_val = extract_value(self.bg_opacity, "none")
+        border_val = extract_value(self.text_border, "none")
+
+        await self.callback_func(
+            interaction,
+            self.line1.value,
+            self.line2.value,
+            color_val,
+            bg_opacity_val,
+            border_val
+        )
 
 
 class DestructiveConfirmationView(PrivateLayoutView):
@@ -271,43 +328,57 @@ class LeaveDashboardView(PrivateLayoutView):
         await self.refresh_state()
         await interaction.response.edit_message(view=self)
 
+    async def open_background_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(LeaveBackgroundModal(self.background_modal_callback))
+
+    async def background_modal_callback(self, interaction: discord.Interaction, attachment: Optional[discord.Attachment]):
+        if not attachment:
+            return await interaction.response.send_message("No background image file uploaded.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        old_path = self.data.get("local_image_path")
+        if old_path and os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except Exception as e:
+                self.cog.bot.logger.error(f"Failed to delete old image {old_path}: {e}")
+
+        try:
+            file_bytes = await attachment.read()
+            img = pyvips.Image.new_from_buffer(file_bytes, "")
+
+            storage_dir = Path("databases/leave_backgrounds")
+            storage_dir.mkdir(parents=True, exist_ok=True)
+
+            new_file_path = storage_dir / f"bg_{self.guild_id}.jpg"
+            img.write_to_file(str(new_file_path), Q=85)
+
+            db_updates = {
+                "local_image_path": str(new_file_path),
+                "image_url": None
+            }
+            await self.update_db(**db_updates)
+            await self.refresh_state()
+            await interaction.edit_original_response(view=self)
+        except Exception as e:
+            await interaction.followup.send(f"Error processing image compression: {e}", ephemeral=True)
+
     async def open_image_modal(self, interaction: discord.Interaction):
         await interaction.response.send_modal(LeaveImageModal(self.data, self.image_modal_callback))
 
-    async def image_modal_callback(self, interaction: discord.Interaction, attachment: Optional[discord.Attachment],
-                                   line1: str, line2: str, color: str):
+    async def image_modal_callback(self, interaction: discord.Interaction,
+                                   line1: str, line2: str, color: str, bg_opacity: str, border: str):
         await interaction.response.defer(ephemeral=True)
 
         final_color = color if color.startswith("#") and len(color) == 7 else "#FFFFFF"
         db_updates = {
             "image_line1": line1,
             "image_line2": line2,
-            "embed_color": final_color
+            "embed_color": final_color,
+            "text_bg_opacity": bg_opacity,
+            "text_border": border
         }
-
-        if attachment:
-            old_path = self.data.get("local_image_path")
-            if old_path and os.path.exists(old_path):
-                try:
-                    os.remove(old_path)
-                except Exception as e:
-                    self.cog.bot.logger.error(f"Failed to delete old image {old_path}: {e}")
-
-            try:
-                file_bytes = await attachment.read()
-                img = pyvips.Image.new_from_buffer(file_bytes, "")
-
-                storage_dir = Path("databases/leave_backgrounds")
-                storage_dir.mkdir(parents=True, exist_ok=True)
-
-                new_file_path = storage_dir / f"bg_{self.guild_id}.jpg"
-                img.write_to_file(str(new_file_path), Q=85)
-
-                db_updates["local_image_path"] = str(new_file_path)
-                db_updates["image_url"] = None
-            except Exception as e:
-                await interaction.followup.send(f"Error processing image compression: {e}", ephemeral=True)
-                return
 
         await self.update_db(**db_updates)
         await self.refresh_state()
@@ -334,7 +405,8 @@ class LeaveDashboardView(PrivateLayoutView):
                 await db.execute("""
                     UPDATE leave_settings 
                     SET custom_message=NULL, custom_line1=NULL, custom_line2=NULL, 
-                        image_url=NULL, local_image_path=NULL, embed_color=NULL, show_text=1, show_image=1 
+                        image_url=NULL, local_image_path=NULL, embed_color=NULL,
+                        text_bg_opacity='none', text_border='none', show_text=1, show_image=1 
                     WHERE guild_id=?
                 """, (self.guild_id,))
                 await db.commit()
@@ -347,7 +419,9 @@ class LeaveDashboardView(PrivateLayoutView):
                     "channel_id": saved_channel,
                     "is_enabled": saved_enabled,
                     "show_text": 1,
-                    "show_image": 1
+                    "show_image": 1,
+                    "text_bg_opacity": "none",
+                    "text_border": "none"
                 }
             self.cog.image_bytes_cache.pop(self.guild_id, None)
             await self.refresh_state()
@@ -395,6 +469,7 @@ class LeaveDashboardView(PrivateLayoutView):
             row.add_item(channel_select)
             container.add_item(row)
             container.add_item(discord.ui.Separator())
+
             btn_text_toggle = discord.ui.Button(
                 label=f"{'Disable' if show_text else 'Enable'}",
                 style=discord.ButtonStyle.secondary if show_text else discord.ButtonStyle.primary
@@ -435,19 +510,40 @@ class LeaveDashboardView(PrivateLayoutView):
             container.add_item(section)
 
             if show_image:
-                btn_img_config = discord.ui.Button(label="Customise", style=discord.ButtonStyle.primary)
+                has_bg = "Yes" if self.data.get("local_image_path") else "No"
+                btn_bg_config = discord.ui.Button(label="Customise Background", style=discord.ButtonStyle.primary)
+                btn_bg_config.callback = self.open_background_modal
+
+                section_bg = discord.ui.Section(
+                    discord.ui.TextDisplay(
+                        f"The Goodbye Card (image). Use the customise button to upload a custom background."
+                    ),
+                    accessory=btn_bg_config
+                )
+                container.add_item(section_bg)
+
+                line1_text = self.data.get("image_line1") or "Goodbye {member.display_name}"
+                line2_text = self.data.get("image_line2") or "We hope to see you again!"
+                color_text = self.data.get("embed_color") or "#FFFFFF"
+
+                btn_img_config = discord.ui.Button(label="Customise Text", style=discord.ButtonStyle.primary)
                 btn_img_config.callback = self.open_image_modal
 
-                curr_l1 = self.data.get("image_line1") or "Goodbye {member.display_name}"
-                curr_l2 = self.data.get("image_line2") or "You will be missed!"
-                using_custom_img = "Yes" if self.data.get("local_image_path") else "No"
-                curr_color = self.data.get("embed_color") or "#FFFFFF"
-                section = discord.ui.Section(
+                section_text = discord.ui.Section(
                     discord.ui.TextDisplay(
-                        f"The Goodbye Card (image). Use the customise button to upload a custom image, or to edit text.\n\n* **Custom Background:** {using_custom_img}\n* **Current Image Text:**\n  * Line 1: `{curr_l1}`\n  * Line 2: `{curr_l2}`\n* **Text Colour:** {curr_color}\n* **Available Variables:**\n  * `{{member.name}}`, `{{server.name}}`, and others available in Discord member or server/guild objects."),
+                        f"The text overlayed on top of the background. Use the Customise Text button to customise it.\n"
+                    ),
                     accessory=btn_img_config
                 )
-                container.add_item(section)
+                container.add_item(section_text)
+                container.add_item(discord.ui.TextDisplay(
+                    f"* **Custom Background:** {has_bg}\n"
+                    f"* **Current Image Text:**\n"
+                    f"  * **Line 1:** `{line1_text}`\n"
+                    f"  * **Line 2:** `{line2_text}`\n"
+                    f"* **Text Colour:** `{color_text}`\n"
+                    f"* **Available Variables:**\n"
+                    f"  * `{{member.display_name}}`, `{{member.name}}`, `{{server.name}}`, and others available in Discord member or server/guild objects."))
 
             container.add_item(discord.ui.Separator())
 
@@ -534,7 +630,9 @@ class Leaves(commands.Cog):
                                  local_image_path TEXT,
                                  image_line1 TEXT,
                                  image_line2 TEXT,
-                                 embed_color TEXT
+                                 embed_color TEXT,
+                                 text_bg_opacity TEXT DEFAULT 'none',
+                                 text_border TEXT DEFAULT 'none'
                              )
                              ''')
             cursor = await db.execute("PRAGMA table_info(leave_settings)")
@@ -544,7 +642,9 @@ class Leaves(commands.Cog):
                 "local_image_path": "TEXT",
                 "image_line1": "TEXT",
                 "image_line2": "TEXT",
-                "embed_color": "TEXT"
+                "embed_color": "TEXT",
+                "text_bg_opacity": "TEXT DEFAULT 'none'",
+                "text_border": "TEXT DEFAULT 'none'"
             }
 
             for col_name, col_type in optional_columns.items():
@@ -628,6 +728,9 @@ class Leaves(commands.Cog):
         hex_color = data.get("embed_color") or "#FFFFFF"
         rgb = [int(hex_color.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4)]
 
+        bg_opacity_setting = str(data.get("text_bg_opacity") or "none").lower()
+        border_setting = str(data.get("text_border") or "none").lower()
+
         base_img = self.get_background_image(guild_id, local_path)
         if not base_img.hasalpha():
             base_img = base_img.addalpha()
@@ -680,30 +783,105 @@ class Leaves(commands.Cog):
 
             base_img = base_img.composite2(avatar, 'over', x=x_pos, y=y_pos)
 
-        def draw_centered_text(base, text, size, y_pos_text, font_name, weight, color_rgb):
-            max_width = 638
-            min_size = 10
-
-            while size > min_size:
+        def get_text_mask(text, size, font_name, weight, max_width=638, min_size=10):
+            curr_size = size
+            while curr_size > min_size:
                 mask = pyvips.Image.text(
-                    f'<span font_family="{font_name}" weight="{weight}" size="{size * 1024}">{text}</span>'
+                    f'<span font_family="{font_name}" weight="{weight}" size="{curr_size * 1024}">{text}</span>'
                 )
                 if mask.width <= max_width:
                     break
-                size -= 2
+                curr_size -= 2
 
-            mask = pyvips.Image.text(
-                f'<span font_family="{font_name}" weight="{weight}" size="{size * 1024}">{text}</span>'
+            return pyvips.Image.text(
+                f'<span font_family="{font_name}" weight="{weight}" size="{curr_size * 1024}">{text}</span>'
             )
 
+        mask1 = get_text_mask(line1_text, 24, font_name="gg sans", weight="Bold")
+        mask2 = get_text_mask(line2_text, 22, font_name="gg sans Medium", weight="Normal")
+
+        line1_y = 178
+        line2_y = 223
+
+        opacity_alpha = 0
+        if "25" in bg_opacity_setting:
+            opacity_alpha = 64
+        elif "50" in bg_opacity_setting:
+            opacity_alpha = 128
+        elif "75" in bg_opacity_setting:
+            opacity_alpha = 191
+
+        def draw_line_bg(base, mask, y_pos_text):
+            padding_x = 16
+            padding_y = 6
+            bg_w = min(card_width - 20, mask.width + padding_x * 2)
+            bg_h = mask.height + padding_y * 2
+            bg_x = (card_width - bg_w) // 2
+            bg_y = y_pos_text - padding_y
+
+            radius = min(8, bg_w // 2, bg_h // 2)
+            bg_mask = pyvips.Image.black(bg_w, bg_h)
+            bg_mask = bg_mask.draw_rect(255, radius, 0, bg_w - 2 * radius, bg_h, fill=True)
+            bg_mask = bg_mask.draw_rect(255, 0, radius, bg_w, bg_h - 2 * radius, fill=True)
+            bg_mask = bg_mask.draw_circle(255, radius, radius, radius, fill=True)
+            bg_mask = bg_mask.draw_circle(255, bg_w - radius, radius, radius, fill=True)
+            bg_mask = bg_mask.draw_circle(255, radius, bg_h - radius, radius, fill=True)
+            bg_mask = bg_mask.draw_circle(255, bg_w - radius, bg_h - radius, radius, fill=True)
+
+            if not base.hasalpha():
+                base = base.addalpha()
+
+            if bg_opacity_setting == "blur":
+                crop_region = base.crop(bg_x, bg_y, bg_w, bg_h)
+                blurred_region = crop_region.gaussblur(5)
+
+                alpha_channel = bg_mask
+                if blurred_region.bands == 3:
+                    blurred_region = blurred_region.bandjoin(alpha_channel)
+                elif blurred_region.bands == 4:
+                    rgb_bands = blurred_region.extract_band(0, n=3)
+                    orig_alpha = blurred_region.extract_band(3)
+                    new_alpha = (orig_alpha / 255.0) * (bg_mask / 255.0) * 255.0
+                    blurred_region = rgb_bands.bandjoin(new_alpha)
+
+                return base.composite2(blurred_region, 'over', x=bg_x, y=bg_y)
+            else:
+                alpha_channel = (bg_mask / 255.0) * opacity_alpha
+                black_3band = pyvips.Image.black(bg_w, bg_h).bandjoin([0, 0])
+                bg_image = black_3band.copy(interpretation="srgb").bandjoin(alpha_channel)
+                return base.composite2(bg_image, 'over', x=bg_x, y=bg_y)
+
+        if opacity_alpha > 0 or bg_opacity_setting == "blur":
+            base_img = draw_line_bg(base_img, mask1, line1_y)
+            base_img = draw_line_bg(base_img, mask2, line2_y)
+
+        border_rgb = None
+        if border_setting == "white":
+            border_rgb = [255, 255, 255]
+        elif border_setting == "black":
+            border_rgb = [0, 0, 0]
+        elif border_setting == "opposite":
+            border_rgb = [255 - rgb[0], 255 - rgb[1], 255 - rgb[2]]
+
+        def draw_text_on_image(base, mask, y_pos_text, color_rgb, border_color_rgb=None):
             text_x_pos = (card_width - mask.width) // 2
-            white_text = mask.new_from_image(color_rgb).copy(interpretation="srgb")
-            text_img = white_text.bandjoin(mask)
+
+            if border_color_rgb is not None:
+                pad = 2
+                padded_mask = mask.embed(pad, pad, mask.width + 2 * pad, mask.height + 2 * pad)
+                kernel = pyvips.Image.new_from_array([[255] * 2] * 2)
+                dilated_mask = padded_mask.morph(kernel, 'dilate')
+
+                border_colored = dilated_mask.new_from_image(border_color_rgb).copy(interpretation="srgb")
+                border_img = border_colored.bandjoin(dilated_mask)
+                base = base.composite2(border_img, 'over', x=text_x_pos - pad, y=y_pos_text - pad)
+
+            text_colored = mask.new_from_image(color_rgb).copy(interpretation="srgb")
+            text_img = text_colored.bandjoin(mask)
             return base.composite2(text_img, 'over', x=text_x_pos, y=y_pos_text)
 
-        base_img = draw_centered_text(base_img, line1_text, 24, 178, font_name="gg sans", weight="Bold", color_rgb=rgb)
-        base_img = draw_centered_text(base_img, line2_text, 22, 223, font_name="gg sans Medium", weight="Normal",
-                                      color_rgb=rgb)
+        base_img = draw_text_on_image(base_img, mask1, line1_y, rgb, border_rgb)
+        base_img = draw_text_on_image(base_img, mask2, line2_y, rgb, border_rgb)
 
         png_buffer = base_img.write_to_buffer(".png")
         return discord.File(io.BytesIO(png_buffer), filename="leave.png")
