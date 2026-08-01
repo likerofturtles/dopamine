@@ -130,9 +130,6 @@ class TopGGVoter(commands.Cog):
                     self.voter_cache[user_id] = {"voted_at": None, "last_checked": now}
 
     async def has_user_voted(self, user_id: int) -> bool:
-        if OVERRIDE_VOTEWALL:
-            return True
-
         try:
             url = TOPGG_API_URL.format(bot_id=self.bot.user.id)
             headers = {"Authorization": TOPGG_BOT_TOKEN}
