@@ -81,7 +81,7 @@ class ExportQueuedView(PrivateLayoutView):
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(self.message))
         container.add_item(discord.ui.Separator())
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.ActionRow(back))
         self.add_item(container)
@@ -154,7 +154,7 @@ class UserDataHub(PrivateLayoutView):
         row.add_item(del_btn)
         row.add_item(feat_btn)
         container.add_item(row)
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -202,7 +202,7 @@ class ServerDataHub(PrivateLayoutView):
         row.add_item(del_btn)
         row.add_item(feat_btn)
         container.add_item(row)
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -304,7 +304,7 @@ class FeatureBrowserPage(PrivateLayoutView):
         )
         toggle.callback = self._toggle_delete
         container.add_item(discord.ui.ActionRow(toggle))
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -378,7 +378,7 @@ class UserDeleteHub(PrivateLayoutView):
         pick_btn = discord.ui.Button(label="Pick Servers…", style=discord.ButtonStyle.secondary)
         pick_btn.callback = self._pick_servers
         container.add_item(discord.ui.ActionRow(pick_btn))
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -445,7 +445,7 @@ class GuildDeleteSelectPage(PrivateLayoutView):
         global_row.add_item(guild_only)
         global_row.add_item(toggle)
         container.add_item(global_row)
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -648,7 +648,7 @@ class InsightsFeaturePage(PrivateLayoutView):
         nav.add_item(page_b)
         nav.add_item(next_b)
         container.add_item(nav)
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -682,7 +682,7 @@ class InsightsCommandsPage(PrivateLayoutView):
         container.add_item(discord.ui.Separator())
         for i, (cmd, count) in enumerate(self.rows[:15], 1):
             container.add_item(discord.ui.TextDisplay(f"**{i}.** `{cmd}` — {count:,}"))
-        back = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back))
@@ -840,7 +840,7 @@ class RemovalFeedbackListPage(PrivateLayoutView):
         nav_row.add_item(next_b)
         container.add_item(nav_row)
 
-        back_btn = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+        back_btn = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
         back_btn.callback = self._back
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.ActionRow(back_btn))
