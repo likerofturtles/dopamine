@@ -247,7 +247,7 @@ class Alerts(commands.Cog):
         self._reminder_cooldowns[user_id] = now + 300.0
 
         async def send_reminder():
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(4.0)
             try:
                 embed = discord.Embed(
                     title="Unread Alert!",
