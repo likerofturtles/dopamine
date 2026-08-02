@@ -171,7 +171,7 @@ class Embeds(commands.Cog):
             content=row.get("content") or "",
             title=row.get("title") or "",
             description=row.get("description") or "",
-            color=row.get("color") or "0x944ae8",
+            color=row.get("color") or "#944AE8",
             url=row.get("url"),
             footer_text=row.get("footer_text") or "",
             footer_icon_url=row.get("footer_icon_url") or "",
@@ -1171,6 +1171,8 @@ class EmbedFieldModal(discord.ui.Modal):
         )
 
         pretty = self.trait.replace("_", " ").title()
+        if pretty == "color":
+            pretty = "colour"
         await interaction.response.send_message(
             f"Updated **{pretty}** successfully!",
             ephemeral=True,
