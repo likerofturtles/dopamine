@@ -1,17 +1,13 @@
-import asyncio
 import datetime
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Any, AsyncGenerator
+from typing import Dict, List, Optional, Set
 
-import aiosqlite
 import discord
-from aiosqlite import Connection
 from beacon import PrivateView
 from discord import app_commands
 from discord.ext import commands
 
-from config import AFKDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 
@@ -247,108 +243,24 @@ class ViewNotifyOnReturn(discord.ui.View):
 class AFK(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.afk_users: Dict[int, AFKState] = {}
         self.missed_pings_cache: Dict[int, List[MissedPing]] = {}
         self.notification_cache: Dict[int, Set[int]] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
 
     async def cog_unload(self):
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-            self.db_pool = None
-
-    async def create_pooled_connection(self, path: str) -> Connection | None:
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                conn = await aiosqlite.connect(
-                    path,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                return conn
-            except Exception:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.1 * (2 ** attempt))
-                    continue
-                raise
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await self.create_pooled_connection(AFKDB_PATH)
-                if not conn is None:
-                    await self.db_pool.put(conn)
+        pass
 
     @asynccontextmanager
-    async def acquire_db(self) -> AsyncGenerator[Connection, Any]:
-        assert self.db_pool is not None
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+    async def acquire_db(self):
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS afk_users (
-                    user_id INTEGER PRIMARY KEY,
-                    status TEXT,
-                    is_global INTEGER DEFAULT 1,
-                    role_id INTEGER,
-                    save_missed_pings INTEGER DEFAULT 1,
-                    started_at INTEGER NOT NULL,
-                    buffer_until INTEGER NOT NULL,
-                    origin_guild_id INTEGER,
-                    old_nick TEXT
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS missed_pings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    author_id INTEGER NOT NULL,
-                    guild_id INTEGER,
-                    channel_id INTEGER,
-                    message_id INTEGER,
-                    content TEXT,
-                    timestamp INTEGER NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS return_notifications (
-                    afk_user_id INTEGER NOT NULL,
-                    observer_id INTEGER NOT NULL,
-                    PRIMARY KEY (afk_user_id, observer_id)
-                )
-                """
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_missed_pings_user_id ON missed_pings (user_id, timestamp)"
-            )
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         self.afk_users.clear()

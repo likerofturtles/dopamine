@@ -1,4 +1,4 @@
-aiosqlite~=0.22.1
+pyturso~=0.7.0
 discord.py~=2.7.1
 discord-beacon~=4.4.4
 emoji~=2.15.0

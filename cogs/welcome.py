@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import Optional, Dict
 
 import aiohttp
-import aiosqlite
 import discord
 import pyvips
 from beacon import PrivateLayoutView
 from beacon import beacon_commands
 from discord.ext import commands
 
-from config import WDB_PATH, WELCOMECARD_PATH, BOLDFONT_PATH, MEDIUMFONT_PATH
+from config import WELCOMECARD_PATH, BOLDFONT_PATH, MEDIUMFONT_PATH
 
 if not hasattr(discord, "RadioGroupOption") and hasattr(discord.ui, "RadioGroupOption"):
     discord.RadioGroupOption = discord.ui.RadioGroupOption
@@ -589,81 +588,24 @@ class Welcome(commands.Cog):
         self.welcome_cache: Dict[int, dict] = {}
         self.image_bytes_cache: Dict[int, bytes] = {}
         self.member_count_cache: Dict[int, int] = {}
-        self.db_pool: Optional[asyncio.Queue] = None
         register_font(BOLDFONT_PATH)
         register_font(MEDIUMFONT_PATH)
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.migrate_old_backgrounds()
         await self.populate_caches()
 
     async def cog_unload(self):
-        if self.db_pool:
-            while not self.db_pool.empty():
-                conn = await self.db_pool.get()
-                await conn.close()
-            self.db_pool = None
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(WDB_PATH, timeout=5)
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
+        pass
 
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS welcome_settings
-                             (
-                                 guild_id INTEGER PRIMARY KEY,
-                                 channel_id INTEGER,
-                                 is_enabled INTEGER DEFAULT 0,
-                                 show_text INTEGER DEFAULT 1,
-                                 custom_message TEXT,
-                                 custom_line1 TEXT,
-                                 custom_line2 TEXT,
-                                 show_image INTEGER DEFAULT 1,
-                                 image_url TEXT,
-                                 local_image_path TEXT,
-                                 image_line1 TEXT,
-                                 image_line2 TEXT,
-                                 embed_color TEXT,
-                                 text_bg_opacity TEXT DEFAULT 'none',
-                                 text_border TEXT DEFAULT 'none'
-                             )
-                             ''')
-            cursor = await db.execute("PRAGMA table_info(welcome_settings)")
-            columns = [row[1] for row in await cursor.fetchall()]
-
-            optional_columns = {
-                "local_image_path": "TEXT",
-                "image_line1": "TEXT",
-                "image_line2": "TEXT",
-                "embed_color": "TEXT",
-                "text_bg_opacity": "TEXT DEFAULT 'none'",
-                "text_border": "TEXT DEFAULT 'none'"
-            }
-
-            for col_name, col_type in optional_columns.items():
-                if col_name not in columns:
-                    await db.execute(f"ALTER TABLE welcome_settings ADD COLUMN {col_name} {col_type}")
-
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def migrate_old_backgrounds(self):
         storage_dir = Path("databases/welcome_backgrounds")

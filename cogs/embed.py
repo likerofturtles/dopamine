@@ -1,15 +1,10 @@
-import asyncio
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, PrivateView, beacon_commands
 from discord.ext import commands
 
-from config import EDB_PATH
-from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.time import get_now_plus_seconds_unix
 
@@ -34,69 +29,12 @@ class EmbedDraft:
 class Embeds(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
 
     async def cog_load(self):
-        await self.init_pools(pool_size=3)
-        await self.init_db()
+        await self.bot.db.wait_ready()
 
     async def cog_unload(self):
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-
-    async def init_pools(self, pool_size: int = 3):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    EDB_PATH,
-                    timeout=5,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS embeds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER,
-                    name TEXT,
-                    content TEXT,
-                    title TEXT,
-                    description TEXT,
-                    color TEXT,
-                    url TEXT,
-                    footer_text TEXT,
-                    footer_icon_url TEXT,
-                    author_name TEXT,
-                    author_icon_url TEXT,
-                    thumbnail_url TEXT,
-                    image_url TEXT,
-                    timestamp_enabled INTEGER DEFAULT 0,
-                    created_by INTEGER,
-                    created_at INTEGER
-                )
-                """
-            )
-            await db.commit()
+        pass
 
     def _parse_color(self, color_str: Optional[str]) -> discord.Color:
         if not color_str:
@@ -196,92 +134,84 @@ class Embeds(commands.Cog):
         name = draft.title or (draft.description[:20] if draft.description else "Untitled Embed")
         now_ts = int(discord.utils.utcnow().timestamp())
 
-        async with self.acquire_db() as db:
-            if existing_id is None:
-                cursor = await db.execute(
-                    """
-                    INSERT INTO embeds (
-                        guild_id, name, content, title, description, color, url,
-                        footer_text, footer_icon_url, author_name, author_icon_url,
-                        thumbnail_url, image_url, timestamp_enabled, created_by, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        guild_id,
-                        name,
-                        draft.content,
-                        draft.title,
-                        draft.description,
-                        draft.color,
-                        draft.url,
-                        draft.footer_text,
-                        draft.footer_icon_url,
-                        draft.author_name,
-                        draft.author_icon_url,
-                        draft.thumbnail_url,
-                        draft.image_url,
-                        int(draft.timestamp_enabled),
-                        user_id,
-                        now_ts,
-                    ),
+        if existing_id is None:
+            await self.bot.db.execute(
+                """
+                INSERT INTO embeds (
+                    guild_id, name, content, title, description, color, url,
+                    footer_text, footer_icon_url, author_name, author_icon_url,
+                    thumbnail_url, image_url, timestamp_enabled, created_by, created_at
                 )
-                await db.commit()
-                return cursor.lastrowid
-            else:
-                await db.execute(
-                    """
-                    UPDATE embeds
-                    SET name = ?, content = ?, title = ?, description = ?, color = ?, url = ?,
-                        footer_text = ?, footer_icon_url = ?, author_name = ?, author_icon_url = ?,
-                        thumbnail_url = ?, image_url = ?, timestamp_enabled = ?
-                    WHERE id = ? AND guild_id = ?
-                    """,
-                    (
-                        name,
-                        draft.content,
-                        draft.title,
-                        draft.description,
-                        draft.color,
-                        draft.url,
-                        draft.footer_text,
-                        draft.footer_icon_url,
-                        draft.author_name,
-                        draft.author_icon_url,
-                        draft.thumbnail_url,
-                        draft.image_url,
-                        int(draft.timestamp_enabled),
-                        existing_id,
-                        guild_id,
-                    ),
-                )
-                await db.commit()
-                return existing_id
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    guild_id,
+                    name,
+                    draft.content,
+                    draft.title,
+                    draft.description,
+                    draft.color,
+                    draft.url,
+                    draft.footer_text,
+                    draft.footer_icon_url,
+                    draft.author_name,
+                    draft.author_icon_url,
+                    draft.thumbnail_url,
+                    draft.image_url,
+                    int(draft.timestamp_enabled),
+                    user_id,
+                    now_ts,
+                ),
+            )
+            row = await self.bot.db.execute("SELECT last_insert_rowid() AS id")
+            return row[0]["id"] if row else 0
+        else:
+            await self.bot.db.execute(
+                """
+                UPDATE embeds
+                SET name = ?, content = ?, title = ?, description = ?, color = ?, url = ?,
+                    footer_text = ?, footer_icon_url = ?, author_name = ?, author_icon_url = ?,
+                    thumbnail_url = ?, image_url = ?, timestamp_enabled = ?
+                WHERE id = ? AND guild_id = ?
+                """,
+                (
+                    name,
+                    draft.content,
+                    draft.title,
+                    draft.description,
+                    draft.color,
+                    draft.url,
+                    draft.footer_text,
+                    draft.footer_icon_url,
+                    draft.author_name,
+                    draft.author_icon_url,
+                    draft.thumbnail_url,
+                    draft.image_url,
+                    int(draft.timestamp_enabled),
+                    existing_id,
+                    guild_id,
+                ),
+            )
+            return existing_id
 
     async def fetch_embeds_for_guild(self, guild_id: int) -> List[Dict[str, Any]]:
-        async with self.acquire_db() as db:
-            async with db.execute(
-                """
-                SELECT id, guild_id, name, content, title, description, color, url,
-                       footer_text, footer_icon_url, author_name, author_icon_url,
-                       thumbnail_url, image_url, timestamp_enabled, created_by, created_at
-                FROM embeds
-                WHERE guild_id = ?
-                ORDER BY id DESC
-                """,
-                (guild_id,),
-            ) as cursor:
-                rows = await cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
-        return [dict(zip(columns, r)) for r in rows]
+        return await self.bot.db.execute(
+            """
+            SELECT id, guild_id, name, content, title, description, color, url,
+                   footer_text, footer_icon_url, author_name, author_icon_url,
+                   thumbnail_url, image_url, timestamp_enabled, created_by, created_at
+            FROM embeds
+            WHERE guild_id = ?
+            ORDER BY id DESC
+            """,
+            (guild_id,),
+        )
 
     async def delete_embed(self, guild_id: int, embed_id: int) -> None:
-        async with self.acquire_db() as db:
-            await db.execute(
-                "DELETE FROM embeds WHERE id = ? AND guild_id = ?",
-                (embed_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute(
+            "DELETE FROM embeds WHERE id = ? AND guild_id = ?",
+            (embed_id, guild_id),
+        )
 
     def data_features(self) -> list[DataFeatureMeta]:
         return [DataFeatureMeta(
@@ -296,8 +226,7 @@ class Embeds(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="embeds")
-        async with self.acquire_db() as db:
-            embeds = await export_table(db, "SELECT * FROM embeds WHERE guild_id = ?", (guild_id,))
+        embeds = await self.bot.db.execute("SELECT * FROM embeds WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"embeds": embeds}
         return chunk
 
@@ -307,10 +236,11 @@ class Embeds(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "embeds":
             return DataDeleteResult(feature_id="embeds")
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
-            await db.commit()
-        return DataDeleteResult(feature_id="embeds", deleted=True, rows_affected=cur.rowcount)
+        count_rows = await self.bot.db.execute(
+            "SELECT COUNT(*) AS cnt FROM embeds WHERE guild_id = ?", (guild_id,))
+        rows_affected = count_rows[0]["cnt"] if count_rows else 0
+        await self.bot.db.execute("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
+        return DataDeleteResult(feature_id="embeds", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="embeds")

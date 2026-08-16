@@ -1,10 +1,8 @@
 import asyncio
 import re
 from collections import deque
-from contextlib import asynccontextmanager
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
-import aiosqlite
 import discord
 import inflect
 import pronouncing
@@ -13,8 +11,6 @@ from beacon import beacon_commands
 from discord import app_commands
 from discord.ext import commands
 
-from config import HDDB_PATH, HWDDB_PATH
-from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
 
@@ -39,9 +35,6 @@ class HaikuDetector(commands.Cog):
         self.haiku_word_cache: Dict[str, int] = {}
         self.enabled_guilds: Set[int] = set()
 
-        self.hd_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
-        self.hwd_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
-
         self.haiku_queue: "asyncio.Queue[discord.Message]" = asyncio.Queue()
         self._worker_tasks: List[asyncio.Task] = []
         self._recent_processed_messages: Deque[int] = deque(maxlen=500)
@@ -49,8 +42,7 @@ class HaikuDetector(commands.Cog):
         self.inflect_engine = inflect.engine()
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         await self.start_workers()
 
@@ -62,84 +54,12 @@ class HaikuDetector(commands.Cog):
             await asyncio.gather(*self._worker_tasks, return_exceptions=True)
         self._worker_tasks.clear()
 
-        for pool_name, pool in [("HD", self.hd_pool), ("HWD", self.hwd_pool)]:
-            if pool:
-                while not pool.empty():
-                    try:
-                        conn = pool.get_nowait()
-                        await conn.close()
-                    except (asyncio.QueueEmpty, Exception) as e:
-                        print(f"Error closing {pool_name} connection: {e}")
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.hd_pool is None:
-            self.hd_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(HDDB_PATH, timeout=5, isolation_level=None)
-                await self._apply_pragmas(conn)
-                await self.hd_pool.put(conn)
-
-        if self.hwd_pool is None:
-            self.hwd_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(HWDDB_PATH, timeout=5, isolation_level=None)
-                await self._apply_pragmas(conn)
-                await self.hwd_pool.put(conn)
-
-    async def _apply_pragmas(self, conn: aiosqlite.Connection):
-        await conn.execute("PRAGMA busy_timeout=5000")
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA synchronous=NORMAL")
-        await conn.commit()
-
-    @asynccontextmanager
-    async def acquire_hd_db(self):
-        conn = await self.hd_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.hd_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_hwd_db(self):
-        conn = await self.hwd_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.hwd_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_hd_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS haiku_settings
-                             (
-                                 guild_id INTEGER PRIMARY KEY,
-                                 is_enabled INTEGER DEFAULT 0
-                             )
-                             ''')
-            await db.commit()
-
-        async with self.acquire_hwd_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS haiku_words
-                             (
-                                 word TEXT PRIMARY KEY, 
-                                 syllables INTEGER
-                             )
-                             ''')
-            await db.commit()
-
     async def populate_caches(self):
-        async with self.acquire_hd_db() as db:
-            async with db.execute("SELECT guild_id FROM haiku_settings WHERE is_enabled = 1") as cursor:
-                rows = await cursor.fetchall()
-                self.enabled_guilds = {row[0] for row in rows}
+        rows = await self.bot.db.execute("SELECT guild_id FROM haiku_settings WHERE is_enabled = 1")
+        self.enabled_guilds = {row["guild_id"] for row in rows}
 
-        async with self.acquire_hwd_db() as db:
-            async with db.execute("SELECT word, syllables FROM haiku_words") as cursor:
-                rows = await cursor.fetchall()
-                self.haiku_word_cache = {row[0]: int(row[1]) for row in rows}
-
+        rows = await self.bot.db.execute("SELECT word, syllables FROM haiku_words")
+        self.haiku_word_cache = {row["word"]: int(row["syllables"]) for row in rows}
 
     async def start_workers(self, worker_count: int = 5):
         if self._worker_tasks:
@@ -151,37 +71,45 @@ class HaikuDetector(commands.Cog):
 
     async def _haiku_worker(self):
         while True:
-            message: discord.Message = await self.haiku_queue.get()
             try:
-                if message.id in self._recent_processed_messages:
-                    continue
+                message: discord.Message = await self.haiku_queue.get()
+                try:
+                    if message.id in self._recent_processed_messages:
+                        continue
 
-                word_data = await self.process_content_to_syllables(message)
+                    word_data = await self.process_content_to_syllables(message)
 
-                formatted_haiku = await self.format_haiku(word_data)
+                    formatted_haiku = await self.format_haiku(word_data)
 
-                if formatted_haiku:
-                    already_replied = False
-                    async for reply in message.channel.history(limit=5, after=message.created_at):
-                        if (reply.author == self.bot.user and
-                                reply.reference and
-                                reply.reference.message_id == message.id):
-                            already_replied = True
-                            break
+                    if formatted_haiku:
+                        already_replied = False
+                        async for reply in message.channel.history(limit=5, after=message.created_at):
+                            if (reply.author == self.bot.user and
+                                    reply.reference and
+                                    reply.reference.message_id == message.id):
+                                already_replied = True
+                                break
 
-                    if not already_replied:
-                        embed = discord.Embed(
-                            description=f"\n*{formatted_haiku}*\n\n— {message.author.display_name}"
-                        )
-                        embed.set_footer(text="I detect Haikus. And sometimes, successfully. To disable, use /haiku detection disable.")
-                        await message.reply(embed=embed)
-                        self._recent_processed_messages.append(message.id)
+                        if not already_replied:
+                            embed = discord.Embed(
+                                description=f"\n*{formatted_haiku}*\n\n— {message.author.display_name}"
+                            )
+                            embed.set_footer(text="I detect Haikus. And sometimes, successfully. To disable, use /haiku detection disable.")
+                            await message.reply(embed=embed)
+                            self._recent_processed_messages.append(message.id)
 
-            except Exception as e:
-                if is_access_error(e) and message.guild:
-                    await report_access_failure(self.bot, message.guild.id, "haiku")
+                except Exception as e:
+                    if is_access_error(e) and message.guild:
+                        await report_access_failure(self.bot, message.guild.id, "haiku")
+            except asyncio.CancelledError:
+                break
+            except:
+                continue
             finally:
-                self.haiku_queue.task_done()
+                try:
+                    self.haiku_queue.task_done()
+                except:
+                    pass
 
     async def get_word_syllables(self, word: str, original_word: str = "") -> int:
         if not word:
@@ -372,9 +300,8 @@ class HaikuDetector(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="haiku")
-        async with self.acquire_hd_db() as db:
-            settings = await export_table(
-                db, "SELECT * FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+        settings = await self.bot.db.execute(
+            "SELECT * FROM haiku_settings WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"haiku_settings": settings}
         return chunk
 
@@ -384,11 +311,12 @@ class HaikuDetector(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "haiku":
             return DataDeleteResult(feature_id="haiku")
-        async with self.acquire_hd_db() as db:
-            cur = await db.execute("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
-            await db.commit()
-        self.enabled_guilds.add(guild_id)
-        return DataDeleteResult(feature_id="haiku", deleted=True, rows_affected=cur.rowcount)
+        count_rows = await self.bot.db.execute(
+            "SELECT COUNT(*) AS cnt FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+        rows_affected = count_rows[0]["cnt"] if count_rows else 0
+        await self.bot.db.execute("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+        self.enabled_guilds.discard(guild_id)
+        return DataDeleteResult(feature_id="haiku", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="haiku")
@@ -416,14 +344,11 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        async with self.acquire_hd_db() as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO haiku_settings (guild_id, is_enabled) VALUES (?, 1)",
-                (interaction.guild.id,)
-            )
-            await db.commit()
-        if not interaction.guild.id in self.enabled_guilds:
-            self.enabled_guilds.add(interaction.guild.id)
+        await self.bot.db.execute(
+            "INSERT OR REPLACE INTO haiku_settings (guild_id, is_enabled) VALUES (?, 1)",
+            (interaction.guild.id,)
+        )
+        self.enabled_guilds.add(interaction.guild.id)
 
         embed = discord.Embed(
             title="Haiku Detection Enabled",
@@ -445,11 +370,8 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        async with self.acquire_hd_db() as db:
-            await db.execute("UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?", (interaction.guild.id,))
-            await db.commit()
-        if interaction.guild.id in self.enabled_guilds:
-            self.enabled_guilds.discard(interaction.guild.id)
+        await self.bot.db.execute("UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?", (interaction.guild.id,))
+        self.enabled_guilds.discard(interaction.guild.id)
 
         embed = discord.Embed(
             title="Haiku Detection Disabled",
@@ -472,30 +394,25 @@ class HaikuDetector(commands.Cog):
         try:
             entries = [entry.strip() for entry in data.split(',')]
             added_words = []
-            to_insert = []
 
             for entry in entries:
-                if not entry: continue
+                if not entry:
+                    continue
                 parts = entry.strip().split()
-                if len(parts) < 2: continue
+                if len(parts) < 2:
+                    continue
 
                 try:
                     word = parts[0].lower().replace("'", "")
                     syllables = int(parts[1])
-                    to_insert.append((word, syllables))
+                    await self.bot.db.execute(
+                        'INSERT OR REPLACE INTO haiku_words (word, syllables) VALUES (?, ?)',
+                        (word, syllables),
+                    )
+                    self.haiku_word_cache[word] = syllables
                     added_words.append(f"{word}: {syllables} syllables")
                 except ValueError:
                     continue
-
-            if to_insert:
-                async with self.acquire_hwd_db() as db:
-                    await db.executemany(
-                        'INSERT OR REPLACE INTO haiku_words (word, syllables) VALUES (?, ?)',
-                        to_insert,
-                    )
-                    await db.commit()
-                for word, syllables in to_insert:
-                    self.haiku_word_cache[word] = syllables
 
             if added_words:
                 embed = discord.Embed(
@@ -516,7 +433,8 @@ class HaikuDetector(commands.Cog):
 
     @commands.command(name="view_haiku_dbcount")
     async def view_haiku_dbcount(self, ctx):
-        if ctx.author.id != 758576879715483719: return
+        if ctx.author.id != 758576879715483719:
+            return
         count = len(self.haiku_word_cache)
         await ctx.send(
             embed=discord.Embed(description=f"Total words in cache/db: **{count}**", color=discord.Color.blue()))

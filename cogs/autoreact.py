@@ -1,17 +1,13 @@
 import asyncio
 import re
 import time
-from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Tuple, Set, Any
 
-import aiosqlite
 import discord
 import emoji
 from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands
 
-from config import ARDB_PATH
-from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
 
@@ -62,12 +58,13 @@ class CreatePanelModal(discord.ui.Modal):
         now = time.time()
         serialized = self.cog.serialize_emojis(parsed)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute('''
-                             INSERT INTO autoreact_panels (guild_id, panel_id, name, emoji, channel_id, is_active, started_at)
-                             VALUES (?, ?, ?, ?, ?, 1, ?)
-                             ''', (self.guild_id, panel_id, name, serialized, self.channel_id, now))
-            await db.commit()
+        await self.cog.bot.db.execute(
+            '''
+            INSERT INTO autoreact_panels (guild_id, panel_id, name, emoji, channel_id, is_active, started_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ''',
+            (self.guild_id, panel_id, name, serialized, self.channel_id, now)
+        )
 
         self.cog.panel_cache[(self.guild_id, panel_id)] = {
             "guild_id": self.guild_id, "panel_id": panel_id, "name": name,
@@ -107,12 +104,10 @@ class EditPanelDetailsModal(discord.ui.Modal):
 
         serialized = self.cog.serialize_emojis(parsed)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoreact_panels SET name = ?, emoji = ? WHERE guild_id = ? AND panel_id = ?",
-                (name, serialized, self.panel['guild_id'], self.panel['panel_id'])
-            )
-            await db.commit()
+        await self.cog.bot.db.execute(
+            "UPDATE autoreact_panels SET name = ?, emoji = ? WHERE guild_id = ? AND panel_id = ?",
+            (name, serialized, self.panel['guild_id'], self.panel['panel_id'])
+        )
 
         self.panel['name'] = name
         self.panel['emoji'] = serialized
@@ -222,8 +217,10 @@ class ManagePage(PrivateLayoutView):
         total_items = len(all_panels)
         total_pages = (total_items + self.items_per_page - 1) // self.items_per_page or 1
 
-        if self.page > total_pages: self.page = total_pages
-        if self.page < 1: self.page = 1
+        if self.page > total_pages:
+            self.page = total_pages
+        if self.page < 1:
+            self.page = 1
 
         start = (self.page - 1) * self.items_per_page
         end = start + self.items_per_page
@@ -254,7 +251,6 @@ class ManagePage(PrivateLayoutView):
             left_btn.callback = self.prev_page
 
             go_btn = discord.ui.Button(label=f"Page {self.page} of {total_pages}", style=discord.ButtonStyle.secondary, disabled=(total_pages <= 1))
-            # pyrefly: ignore [no-matching-overload]
             go_btn.callback = lambda interaction: interaction.response.send_modal(GoToPageModal(self, total_pages))
 
             right_btn = discord.ui.Button(emoji="▶", style=discord.ButtonStyle.primary, disabled=(self.page == total_pages))
@@ -385,12 +381,10 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_state(self, interaction: discord.Interaction):
         new_state = 0 if self.panel['is_active'] else 1
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoreact_panels SET is_active = ?, started_at = ? WHERE guild_id = ? AND panel_id = ?",
-                (new_state, time.time(), self.panel['guild_id'], self.panel['panel_id'])
-            )
-            await db.commit()
+        await self.cog.bot.db.execute(
+            "UPDATE autoreact_panels SET is_active = ?, started_at = ? WHERE guild_id = ? AND panel_id = ?",
+            (new_state, time.time(), self.panel['guild_id'], self.panel['panel_id'])
+        )
         self.panel['is_active'] = new_state
         self.build_layout()
         await interaction.response.edit_message(view=self)
@@ -409,12 +403,14 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_whitelist(self, interaction: discord.Interaction):
         if self.panel['member_whitelist']:
-            async with self.cog.acquire_db() as db:
-                await db.execute("UPDATE autoreact_panels SET member_whitelist = 0 WHERE guild_id = ? AND panel_id = ?",
-                                 (self.panel['guild_id'], self.panel['panel_id']))
-                await db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?",
-                                 (self.panel['guild_id'], self.panel['panel_id']))
-                await db.commit()
+            await self.cog.bot.db.execute(
+                "UPDATE autoreact_panels SET member_whitelist = 0 WHERE guild_id = ? AND panel_id = ?",
+                (self.panel['guild_id'], self.panel['panel_id'])
+            )
+            await self.cog.bot.db.execute(
+                "DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?",
+                (self.panel['guild_id'], self.panel['panel_id'])
+            )
 
             self.panel['member_whitelist'] = 0
             if (self.panel['guild_id'], self.panel['panel_id']) in self.cog.whitelist_cache:
@@ -428,12 +424,10 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_image_only(self, interaction: discord.Interaction):
         new_mode = 0 if self.panel['image_only_mode'] else 1
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoreact_panels SET image_only_mode = ? WHERE guild_id = ? AND panel_id = ?",
-                (new_mode, self.panel['guild_id'], self.panel['panel_id'])
-            )
-            await db.commit()
+        await self.cog.bot.db.execute(
+            "UPDATE autoreact_panels SET image_only_mode = ? WHERE guild_id = ? AND panel_id = ?",
+            (new_mode, self.panel['guild_id'], self.panel['panel_id'])
+        )
         self.panel['image_only_mode'] = new_mode
         self.build_layout()
         await interaction.response.edit_message(view=self)
@@ -500,12 +494,10 @@ class EditChannelSelect(PrivateLayoutView):
 
     async def select_callback(self, interaction: discord.Interaction):
         new_channel_id = self.select.values[0].id
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoreact_panels SET channel_id = ? WHERE guild_id = ? AND panel_id = ?",
-                (new_channel_id, self.guild_id, self.panel_data['panel_id'])
-            )
-            await db.commit()
+        await self.cog.bot.db.execute(
+            "UPDATE autoreact_panels SET channel_id = ? WHERE guild_id = ? AND panel_id = ?",
+            (new_channel_id, self.guild_id, self.panel_data['panel_id'])
+        )
 
         self.panel_data['channel_id'] = new_channel_id
 
@@ -543,24 +535,23 @@ class MemberSelect(PrivateLayoutView):
         panel_id = self.panel_data['panel_id']
         key = (self.guild_id, panel_id)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoreact_panels SET member_whitelist = 1 WHERE guild_id = ? AND panel_id = ?",
-                key
+        await self.cog.bot.db.execute(
+            "UPDATE autoreact_panels SET member_whitelist = 1 WHERE guild_id = ? AND panel_id = ?",
+            key
+        )
+        self.panel_data['member_whitelist'] = 1
+
+        if key not in self.cog.whitelist_cache:
+            self.cog.whitelist_cache[key] = set()
+
+        for member in members:
+            if member.bot:
+                continue
+            await self.cog.bot.db.execute(
+                "INSERT OR REPLACE INTO autoreact_whitelist (guild_id, panel_id, user_id) VALUES (?, ?, ?)",
+                (self.guild_id, panel_id, member.id)
             )
-            self.panel_data['member_whitelist'] = 1
-
-            for member in members:
-                if member.bot: continue
-                await db.execute(
-                    "INSERT OR REPLACE INTO autoreact_whitelist (guild_id, panel_id, user_id) VALUES (?, ?, ?)",
-                    (self.guild_id, panel_id, member.id)
-                )
-                if key not in self.cog.whitelist_cache:
-                    self.cog.whitelist_cache[key] = set()
-                self.cog.whitelist_cache[key].add(member.id)
-
-            await db.commit()
+            self.cog.whitelist_cache[key].add(member.id)
 
         view = EditPage(self.user, self.cog, self.panel_data)
         await interaction.response.edit_message(content=None, embed=None, view=view)
@@ -621,11 +612,9 @@ class DestructiveConfirmationView(PrivateLayoutView):
         await self.cog.delete_panel(self.guild_id, self.panel_id)
 
 
-
 class AutoReact(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue] = None
 
         self.panel_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
         self.whitelist_cache: Dict[Tuple[int, int], Set[int]] = {}
@@ -635,8 +624,7 @@ class AutoReact(commands.Cog):
         self._reaction_task: Optional[asyncio.Task] = None
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if self._reaction_task is None or self._reaction_task.done():
             self._reaction_task = asyncio.create_task(self.reaction_processor())
@@ -649,91 +637,29 @@ class AutoReact(commands.Cog):
             except asyncio.CancelledError:
                 pass
 
-        if self.db_pool:
-            num_conns = self.db_pool.qsize()
-            for _ in range(num_conns):
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing sqlite connection: {e}")
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(ARDB_PATH, timeout=5.0)
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        if self.db_pool is None:
-            return
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS autoreact_panels
-                             (
-                                 guild_id INTEGER,
-                                 panel_id INTEGER,
-                                 name TEXT,
-                                 emoji TEXT,
-                                 channel_id INTEGER,
-                                 is_active INTEGER DEFAULT 0,
-                                 member_whitelist INTEGER DEFAULT 0,
-                                 image_only_mode INTEGER DEFAULT 0,
-                                 started_at REAL, 
-                                 PRIMARY KEY (guild_id, panel_id)
-                                 )
-                             ''')
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS autoreact_whitelist
-                             (
-                                 guild_id INTEGER,
-                                 panel_id INTEGER,
-                                 user_id INTEGER,
-                                 PRIMARY KEY (guild_id, panel_id, user_id)
-                                 )
-                             ''')
-            await db.commit()
-
     async def populate_caches(self):
         self.panel_cache.clear()
         self.whitelist_cache.clear()
 
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM autoreact_panels") as cursor:
-                rows = await cursor.fetchall()
-                cols = [c[0] for c in cursor.description]
-                for row in rows:
-                    data = dict(zip(cols, row))
-                    key = (data['guild_id'], data['panel_id'])
-                    data['emoji_list'] = self.deserialize_emojis(data['emoji'])
-                    self.panel_cache[key] = data
+        rows = await self.bot.db.execute("SELECT * FROM autoreact_panels")
+        for data in rows:
+            key = (data['guild_id'], data['panel_id'])
+            data['emoji_list'] = self.deserialize_emojis(data['emoji'])
+            self.panel_cache[key] = data
 
-            async with db.execute("SELECT guild_id, panel_id, user_id FROM autoreact_whitelist") as cursor:
-                rows = await cursor.fetchall()
-                for g_id, p_id, u_id in rows:
-                    key = (g_id, p_id)
-                    if key not in self.whitelist_cache:
-                        self.whitelist_cache[key] = set()
-                    self.whitelist_cache[key].add(u_id)
+        rows = await self.bot.db.execute("SELECT guild_id, panel_id, user_id FROM autoreact_whitelist")
+        for row in rows:
+            g_id = row['guild_id']
+            p_id = row['panel_id']
+            u_id = row['user_id']
+            key = (g_id, p_id)
+            if key not in self.whitelist_cache:
+                self.whitelist_cache[key] = set()
+            self.whitelist_cache[key].add(u_id)
 
     def parse_emoji_input(self, emoji_input: str) -> List[str]:
-        if not emoji_input: return []
+        if not emoji_input:
+            return []
         emoji_input = emoji.emojize(emoji_input, language='alias')
         tokens = []
         parts = [p.strip() for p in re.split(r'[,\s]+', emoji_input) if p.strip()]
@@ -749,7 +675,8 @@ class AutoReact(commands.Cog):
         return '|'.join(emojis)
 
     def deserialize_emojis(self, value: str) -> List[str]:
-        if not value: return []
+        if not value:
+            return []
         if '|' in value:
             parts = value.split('|')
         elif ',' in value:
@@ -765,10 +692,8 @@ class AutoReact(commands.Cog):
 
     async def delete_panel(self, guild_id: int, panel_id: int):
         key = (guild_id, panel_id)
-        async with self.acquire_db() as db:
-            await db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?", key)
-            await db.execute("DELETE FROM autoreact_panels WHERE guild_id = ? AND panel_id = ?", key)
-            await db.commit()
+        await self.bot.db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?", key)
+        await self.bot.db.execute("DELETE FROM autoreact_panels WHERE guild_id = ? AND panel_id = ?", key)
 
         self.panel_cache.pop(key, None)
         self.whitelist_cache.pop(key, None)
@@ -791,11 +716,10 @@ class AutoReact(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="autoreact")
-        async with self.acquire_db() as db:
-            panels = await export_table(
-                db, "SELECT * FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
-            whitelist = await export_table(
-                db, "SELECT * FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
+        panels = await self.bot.db.execute(
+            "SELECT * FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
+        whitelist = await self.bot.db.execute(
+            "SELECT * FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"panels": panels, "whitelist": whitelist}
         return chunk
 
@@ -805,14 +729,15 @@ class AutoReact(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "autoreact":
             return DataDeleteResult(feature_id="autoreact")
-        rows_affected = 0
+        count_rows = await self.bot.db.execute(
+            "SELECT COUNT(*) AS cnt FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
+        rows_affected = count_rows[0]["cnt"] if count_rows else 0
+        count_rows = await self.bot.db.execute(
+            "SELECT COUNT(*) AS cnt FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
+        rows_affected += count_rows[0]["cnt"] if count_rows else 0
+        await self.bot.db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute("DELETE FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
         keys = [k for k in self.panel_cache if k[0] == guild_id]
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            cur = await db.execute("DELETE FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            await db.commit()
         for key in keys:
             self.panel_cache.pop(key, None)
             self.whitelist_cache.pop(key, None)
@@ -837,12 +762,10 @@ class AutoReact(commands.Cog):
                 continue
             if await self._channel_sendable(guild, panel["channel_id"]):
                 continue
-            async with self.acquire_db() as db:
-                await db.execute(
-                    "UPDATE autoreact_panels SET is_active = 0 WHERE guild_id = ? AND panel_id = ?",
-                    (g_id, panel_id),
-                )
-                await db.commit()
+            await self.bot.db.execute(
+                "UPDATE autoreact_panels SET is_active = 0 WHERE guild_id = ? AND panel_id = ?",
+                (g_id, panel_id),
+            )
             panel["is_active"] = 0
             result.actions.append(f"deactivated_panel:{panel_id}")
         return result
@@ -857,17 +780,20 @@ class AutoReact(commands.Cog):
 
             if panel['image_only_mode']:
                 has_img = bool(message.attachments) or any(e.type == 'image' for e in message.embeds)
-                if not has_img: continue
+                if not has_img:
+                    continue
 
             if panel['member_whitelist']:
                 allowed = self.whitelist_cache.get((g_id, p_id), set())
-                if message.author.id not in allowed: continue
+                if message.author.id not in allowed:
+                    continue
             for em in panel['emoji_list']:
                 await self._reaction_queue.put((message, em))
 
     async def reaction_processor(self):
         while True:
             try:
+                await self.bot.db.wait_ready()
                 message, em = await self._reaction_queue.get()
                 async with self._reaction_semaphore:
                     try:

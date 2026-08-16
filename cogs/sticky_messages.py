@@ -4,7 +4,6 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, List, Any
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView
 from beacon import beacon_commands
@@ -912,14 +911,12 @@ class StickyMessages(commands.Cog):
         self.bot = bot
         self.panel_cache: Dict[int, Dict[str, dict]] = {}
         self.active_channels: Dict[int, dict] = {}
-        self.db_pool = None
         self.last_message_time: Dict[int, float] = {}
         self.last_activity: Dict[int, float] = {}
         self.sticky_tasks: Dict[int, asyncio.Task] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self.sticky_monitor.is_running(): self.sticky_monitor.start()
 
@@ -930,52 +927,13 @@ class StickyMessages(commands.Cog):
         for t in self.sticky_tasks.values():
             t.cancel()
 
-        if self.db_pool:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing sticky db connection: {e}")
-
-    async def init_pools(self, pool_size=6):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(STICKYDB_PATH)
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute('''CREATE TABLE IF NOT EXISTS sticky_panels (
-                guild_id INTEGER, panel_id INTEGER, title TEXT, description TEXT, footer TEXT, 
-                image_url TEXT, embed_color TEXT, channel_id INTEGER, last_message_id INTEGER,
-                conversation_duration INTEGER DEFAULT 10, include_bots INTEGER DEFAULT 1,
-                PRIMARY KEY (guild_id, panel_id))''')
-            for sql in (
-                "ALTER TABLE sticky_panels ADD COLUMN response_type TEXT DEFAULT 'embed'",
-                "ALTER TABLE sticky_panels ADD COLUMN response_text TEXT",
-                "ALTER TABLE sticky_panels ADD COLUMN embed_content TEXT",
-                "ALTER TABLE sticky_panels ADD COLUMN embed_data TEXT",
-                "ALTER TABLE sticky_panels ADD COLUMN conv_mode TEXT DEFAULT 'Dynamic'",
-            ):
-                try:
-                    await db.execute(sql)
-                except Exception:
-                    pass
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         async with self.acquire_db() as db:

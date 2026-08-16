@@ -69,16 +69,14 @@ class DestructiveConfirmationView(PrivateLayoutView):
 class Logging(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.manager = LoggingManager()
+        self.manager = LoggingManager(bot.db)
 
     async def cog_load(self):
-        await self.manager.init_pools()
-        await self.manager.init_db()
+        await self.bot.db.wait_ready()
         await self.manager.populate_cache()
 
     async def cog_unload(self):
-        if self.manager:
-            await self.manager.close_pools()
+        pass
 
     log = beacon_commands.Group(name="logging", description="Manage logging feature.", permissions_preset="security")
     @log.command(name="set", description="Set the logging channel for logs.")
@@ -167,12 +165,11 @@ class Logging(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="logging")
-        async with self.manager.acquire_db() as db:
-            rows = await export_table(
-                db,
-                "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ?",
-                (guild_id,),
-            )
+        rows = await export_table(
+            self.bot.db,
+            "SELECT guild_id, channel_id FROM log_channels WHERE guild_id = ?",
+            (guild_id,),
+        )
         if rows:
             chunk.guild_data[guild_id] = rows[0]
         return chunk

@@ -22,7 +22,7 @@ class Dblc(commands.Cog):
         self.bot_version = VERSION.bot_version
         self.latency_cache = deque(maxlen=1440)
         self.temp_samples = []
-        self.manager = LoggingManager()
+        self.manager = LoggingManager(bot.db)
         self.process = psutil.Process(os.getpid())
         self.process.cpu_percent(interval=None)
         self.current_cpu = 0.0

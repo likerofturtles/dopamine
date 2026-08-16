@@ -585,7 +585,6 @@ class InsightsDashboard(PrivateLayoutView):
             f"**Last 7 days:** {stats.get('week', 0):,}\n"
             f"**Last 30 days:** {stats.get('month', 0):,}\n"
             f"**All time:** {stats.get('all_time', 0):,}\n\n"
-            f"**Last backup:** {stats.get('last_backup', 'Never')}\n"
             f"**Bot removal feedback responses:** {stats.get('feedback_count', 0)}"
         ))
         container.add_item(discord.ui.Separator())
@@ -748,9 +747,7 @@ class RemovalFeedbackListPage(PrivateLayoutView):
         }
         query += f" {sort_sql_map.get(self.sort_by, 'ORDER BY responded_at DESC')}"
 
-        async with self.cog.acquire_db() as db:
-            async with db.execute(query, params) as cur:
-                self.rows = await cur.fetchall()
+        self.rows = await self.cog.bot.db.execute(query, tuple(params))
 
         self.total_count = len(self.rows)
 
@@ -774,7 +771,13 @@ class RemovalFeedbackListPage(PrivateLayoutView):
             container.add_item(discord.ui.TextDisplay("*(No feedback entries found)*"))
             container.add_item(discord.ui.Separator())
         else:
-            for gid, gname, uid, reason, other, responded_at in chunk:
+            for row in chunk:
+                gid = row["guild_id"]
+                gname = row["guild_name"]
+                uid = row["responder_user_id"]
+                reason = row["reason"]
+                other = row["other_text"]
+                responded_at = row["responded_at"]
                 reason_label = RemovalFeedbackView.REASONS.get(reason, reason)
                 detail = f"### {gname} (`{gid}`)\n"
                 detail += f"- **Reason:** {reason_label}\n"

@@ -1,16 +1,13 @@
 import asyncio
 import time
 from collections import deque
-from contextlib import asynccontextmanager
 from typing import Optional, Dict
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from config import SDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
@@ -157,7 +154,6 @@ class StarboardCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.SDB_PATH = SDB_PATH
         self.STAR_EMOJI = "⭐"
 
         self.settings_cache: Dict[int, dict] = {}
@@ -169,12 +165,10 @@ class StarboardCog(commands.Cog):
         self.lfg_message_times: dict[int, float] = {}
 
         self._max_lfg_entries: int = 5000
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self._starboard_tasks: Dict[int, asyncio.Task] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self._cache_cleanup.is_running():
             self._cache_cleanup.start()
@@ -189,130 +183,36 @@ class StarboardCog(commands.Cog):
         if self._starboard_tasks:
             await asyncio.gather(*self._starboard_tasks.values(), return_exceptions=True)
 
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await asyncio.wait_for(conn.close(), timeout=1.0)
-                except (asyncio.QueueEmpty, asyncio.TimeoutError):
-                    break
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    self.SDB_PATH,
-                    timeout=5
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        if self.db_pool is None:
-            await self.init_pools()
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute("""
-                             CREATE TABLE IF NOT EXISTS guild_settings
-                             (
-                                 guild_id
-                                 INTEGER
-                                 PRIMARY
-                                 KEY,
-                                 star_threshold
-                                 INTEGER
-                                 DEFAULT
-                                 3,
-                                 starboard_channel_id
-                                 INTEGER,
-                                 lfg_threshold
-                                 INTEGER
-                                 DEFAULT
-                                 4,
-                                 enabled
-                                 INTEGER
-                                 DEFAULT
-                                 0
-                             )
-                             """)
-            try:
-                await db.execute("ALTER TABLE guild_settings ADD COLUMN enabled INTEGER DEFAULT 0")
-            except Exception:
-                pass
-
-            await db.execute("""
-                             CREATE TABLE IF NOT EXISTS star_posts
-                             (
-                                 guild_id
-                                 INTEGER
-                                 NOT
-                                 NULL,
-                                 source_message_id
-                                 INTEGER
-                                 NOT
-                                 NULL,
-                                 starboard_message_id
-                                 INTEGER
-                                 NOT
-                                 NULL,
-                                 PRIMARY
-                                 KEY
-                             (
-                                 guild_id,
-                                 source_message_id
-                             )
-                                 )
-                             """)
-            await db.commit()
-
     async def populate_caches(self):
         """Load all data from DB into memory."""
         self.settings_cache.clear()
         self.star_posts_cache.clear()
 
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM guild_settings") as cursor:
-                rows = await cursor.fetchall()
-                cols = [c[0] for c in cursor.description]
-                for row in rows:
-                    data = dict(zip(cols, row))
-                    self.settings_cache[data["guild_id"]] = data
+        rows = await self.bot.db.execute("SELECT * FROM starboard_guild_settings")
+        for data in rows:
+            self.settings_cache[data["guild_id"]] = data
 
-            async with db.execute("SELECT guild_id, source_message_id, starboard_message_id FROM star_posts") as cursor:
-                rows = await cursor.fetchall()
-                for gid, src_id, sb_id in rows:
-                    if gid not in self.star_posts_cache:
-                        self.star_posts_cache[gid] = {}
-                    self.star_posts_cache[gid][src_id] = sb_id
+        rows = await self.bot.db.execute(
+            "SELECT guild_id, source_message_id, starboard_message_id FROM star_posts")
+        for row in rows:
+            gid, src_id, sb_id = row["guild_id"], row["source_message_id"], row["starboard_message_id"]
+            if gid not in self.star_posts_cache:
+                self.star_posts_cache[gid] = {}
+            self.star_posts_cache[gid][src_id] = sb_id
 
     async def get_guild_settings(self, guild_id: int) -> dict:
         """Fetch settings from cache, or create in DB and cache if missing."""
         if guild_id in self.settings_cache:
             return self.settings_cache[guild_id]
 
-        async with self.acquire_db() as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO guild_settings (guild_id, enabled) VALUES (?, 0)",
-                (guild_id,)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "INSERT OR IGNORE INTO starboard_guild_settings (guild_id, enabled) VALUES (?, 0)",
+            (guild_id,)
+        )
 
-            async with db.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)) as cursor:
-                row = await cursor.fetchone()
-                cols = [c[0] for c in cursor.description]
-                data = dict(zip(cols, row))
+        rows = await self.bot.db.execute(
+            "SELECT * FROM starboard_guild_settings WHERE guild_id = ?", (guild_id,))
+        data = rows[0]
 
         self.settings_cache[guild_id] = data
         return data
@@ -328,9 +228,8 @@ class StarboardCog(commands.Cog):
         set_clause = ", ".join(f"{key} = ?" for key in kwargs.keys())
         values = list(kwargs.values()) + [guild_id]
 
-        async with self.acquire_db() as db:
-            await db.execute(f"UPDATE guild_settings SET {set_clause} WHERE guild_id = ?", values)
-            await db.commit()
+        await self.bot.db.execute_write(
+            f"UPDATE starboard_guild_settings SET {set_clause} WHERE guild_id = ?", values)
 
     def get_star_emoji(self, count: int) -> str:
         if count >= 15:
@@ -348,26 +247,22 @@ class StarboardCog(commands.Cog):
             self.star_posts_cache[guild_id] = {}
         self.star_posts_cache[guild_id][source_id] = starboard_id
 
-        async with self.acquire_db() as db:
-            await db.execute("""
+        await self.bot.db.execute_write("""
                              INSERT INTO star_posts (guild_id, source_message_id, starboard_message_id)
                              VALUES (?, ?, ?) ON CONFLICT(guild_id, source_message_id) DO
                              UPDATE SET
                                  starboard_message_id = excluded.starboard_message_id
                              """, (guild_id, source_id, starboard_id))
-            await db.commit()
 
     async def delete_star_post(self, guild_id: int, source_id: int):
         """Remove from both DB and cache manually."""
         if guild_id in self.star_posts_cache:
             self.star_posts_cache[guild_id].pop(source_id, None)
 
-        async with self.acquire_db() as db:
-            await db.execute(
-                "DELETE FROM star_posts WHERE guild_id = ? AND source_message_id = ?",
-                (guild_id, source_id)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "DELETE FROM star_posts WHERE guild_id = ? AND source_message_id = ?",
+            (guild_id, source_id)
+        )
 
     def get_star_post(self, guild_id: int, source_id: int) -> Optional[int]:
         """Pure cache read for performance."""
@@ -385,6 +280,7 @@ class StarboardCog(commands.Cog):
     @tasks.loop(minutes=5)
     async def _cache_cleanup(self):
         """Standard LFG/Cooldown cleanup (Settings/Star cache persist)."""
+        await self.bot.db.wait_ready()
         current_time = time.time()
 
         max_age = 24 * 60 * 60
@@ -642,11 +538,10 @@ class StarboardCog(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="starboard")
-        async with self.acquire_db() as db:
-            settings = await export_table(
-                db, "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
-            posts = await export_table(
-                db, "SELECT * FROM star_posts WHERE guild_id = ?", (guild_id,))
+        settings = await export_table(
+            self.bot.db, "SELECT * FROM starboard_guild_settings WHERE guild_id = ?", (guild_id,))
+        posts = await export_table(
+            self.bot.db, "SELECT * FROM star_posts WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"settings": settings, "star_posts": posts}
         return chunk
 
@@ -657,12 +552,10 @@ class StarboardCog(commands.Cog):
         if feature_id and feature_id != "starboard":
             return DataDeleteResult(feature_id="starboard")
         rows_affected = 0
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM star_posts WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            cur = await db.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            await db.commit()
+        rows_affected += await self.bot.db.execute_write(
+            "DELETE FROM star_posts WHERE guild_id = ?", (guild_id,))
+        rows_affected += await self.bot.db.execute_write(
+            "DELETE FROM starboard_guild_settings WHERE guild_id = ?", (guild_id,))
         self.settings_cache.pop(guild_id, None)
         self.star_posts_cache.pop(guild_id, None)
         return DataDeleteResult(feature_id="starboard", deleted=True, rows_affected=rows_affected)

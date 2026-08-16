@@ -2,9 +2,10 @@ import os
 import logging
 import asyncio
 import discord
-from config import TOKEN, LOGGING_DEBUG_MODE
+from config import TOKEN, LOGGING_DEBUG_MODE, TURSO_LOCAL_PATH, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
 from logging.handlers import RotatingFileHandler
 from beacon import BeaconAutoShardedBot
+from utils.database import DatabaseManager
 import traceback
 
 if not TOKEN:
@@ -50,6 +51,12 @@ bot = BeaconAutoShardedBot(
     bot_logger=logger
 )
 
+bot.db = DatabaseManager(
+    db_path=TURSO_LOCAL_PATH,
+    sync_url=TURSO_DATABASE_URL,
+    auth_token=TURSO_AUTH_TOKEN
+)
+
 bot.back_emoji = discord.PartialEmoji.from_str("<:back:1529498596402008225>")
 
 @bot.tree.context_menu(name="Get User ID")
@@ -70,6 +77,8 @@ async def get_message_id(interaction: discord.Interaction, message: discord.Mess
 if __name__ == "__main__":
     async def main_async():
         try:
+            await bot.db.connect()
+            await bot.db.ensure_schema()
             async with bot:
                 await bot.start(TOKEN)
         except Exception as e:

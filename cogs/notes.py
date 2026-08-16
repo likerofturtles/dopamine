@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
-from typing import Optional, Dict
-
-import aiosqlite
 import discord
 from beacon import ViewPaginator, preconditions, PrivateView
 from discord import app_commands
 from discord.ext import commands
 
-from config import NOTEDB_PATH
-from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 
 note_group = app_commands.Group(name="note", description="Note management commands")
@@ -39,70 +32,66 @@ class UndoButtonView(PrivateView):
         await interaction.response.edit_message(view=self)
 
         try:
-            async with self.cog.acquire_db() as db:
-                if self.action_type == "create":
-                    note_name = self.data["name"]
-                    await db.execute(
+            if self.action_type == "create":
+                note_name = self.data["name"]
+                await self.cog.bot.db.execute(
+                    "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
+                    (self.user_id, note_name)
+                )
+
+                if self.user_id in self.cog.notes_cache:
+                    self.cog.notes_cache[self.user_id].pop(note_name, None)
+
+                message = f"Action undone! Note '{note_name}' has been deleted."
+
+            elif self.action_type == "edit":
+                old_name = self.data["old_name"]
+                new_name = self.data["new_name"]
+                old_content = self.data["old_content"]
+
+                if old_name != new_name:
+                    await self.cog.bot.db.execute(
                         "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
-                        (self.user_id, note_name)
+                        (self.user_id, new_name)
                     )
-                    await db.commit()
 
-                    if self.user_id in self.cog.notes_cache:
-                        self.cog.notes_cache[self.user_id].pop(note_name, None)
+                await self.cog.bot.db.execute(
+                    """
+                    INSERT INTO user_notes (user_id, note_name, note_content, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(user_id, note_name) DO UPDATE SET
+                        note_content = excluded.note_content,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (self.user_id, old_name, old_content)
+                )
 
-                    message = f"Action undone! Note '{note_name}' has been deleted."
-
-                elif self.action_type == "edit":
-                    old_name = self.data["old_name"]
-                    new_name = self.data["new_name"]
-                    old_content = self.data["old_content"]
-
+                if self.user_id in self.cog.notes_cache:
                     if old_name != new_name:
-                        await db.execute(
-                            "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
-                            (self.user_id, new_name)
-                        )
+                        self.cog.notes_cache[self.user_id].pop(new_name, None)
+                    self.cog.notes_cache[self.user_id][old_name] = old_content
 
-                    await db.execute(
-                        """
-                        INSERT INTO user_notes (user_id, note_name, note_content, updated_at)
-                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(user_id, note_name) DO UPDATE SET
-                            note_content = excluded.note_content,
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        (self.user_id, old_name, old_content)
-                    )
-                    await db.commit()
+                message = f"Action undone! Note has been reverted back to '{old_name}'."
 
-                    if self.user_id in self.cog.notes_cache:
-                        if old_name != new_name:
-                            self.cog.notes_cache[self.user_id].pop(new_name, None)
-                        self.cog.notes_cache[self.user_id][old_name] = old_content
+            elif self.action_type == "delete":
+                note_name = self.data["name"]
+                content = self.data["content"]
 
-                    message = f"Action undone! Note has been reverted back to '{old_name}'."
+                await self.cog.bot.db.execute(
+                    """
+                    INSERT INTO user_notes (user_id, note_name, note_content)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, note_name) DO UPDATE SET
+                        note_content = excluded.note_content
+                    """,
+                    (self.user_id, note_name, content)
+                )
 
-                elif self.action_type == "delete":
-                    note_name = self.data["name"]
-                    content = self.data["content"]
+                if self.user_id not in self.cog.notes_cache:
+                    self.cog.notes_cache[self.user_id] = {}
+                self.cog.notes_cache[self.user_id][note_name] = content
 
-                    await db.execute(
-                        """
-                        INSERT INTO user_notes (user_id, note_name, note_content)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT(user_id, note_name) DO UPDATE SET
-                            note_content = excluded.note_content
-                        """,
-                        (self.user_id, note_name, content)
-                    )
-                    await db.commit()
-
-                    if self.user_id not in self.cog.notes_cache:
-                        self.cog.notes_cache[self.user_id] = {}
-                    self.cog.notes_cache[self.user_id][note_name] = content
-
-                    message = f"Action undone! Note '{note_name}' has been restored."
+                message = f"Action undone! Note '{note_name}' has been restored."
 
             await self.interaction.edit_original_response(content=message, embed=None, view=None)
             self.stop()
@@ -110,15 +99,14 @@ class UndoButtonView(PrivateView):
         except Exception as e:
             await interaction.followup.send(f"Error executing undo: {e}", ephemeral=True)
 
+
 class Notes(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.notes_cache: Dict[int, Dict[str, str]] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
+        self.notes_cache: dict[int, dict[str, str]] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
 
     async def cog_unload(self):
@@ -127,74 +115,16 @@ class Notes(commands.Cog):
         except Exception:
             pass
 
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-            self.db_pool = None
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    NOTEDB_PATH,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        if self.db_pool is None:
-            await self.init_pools()
-
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS user_notes
-                (
-                    user_id INTEGER,
-                    note_name TEXT,
-                    note_content TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, note_name)
-                    )
-                """
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_user_notes_user_id
-                    ON user_notes (user_id)
-                """
-            )
-            await db.commit()
-
     async def populate_caches(self):
         self.notes_cache.clear()
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT user_id, note_name, note_content FROM user_notes") as cursor:
-                rows = await cursor.fetchall()
-                for user_id, name, content in rows:
-                    if user_id not in self.notes_cache:
-                        self.notes_cache[user_id] = {}
-                    self.notes_cache[user_id][name] = content
+        rows = await self.bot.db.execute("SELECT user_id, note_name, note_content FROM user_notes")
+        for row in rows:
+            user_id = row["user_id"]
+            name = row["note_name"]
+            content = row["note_content"]
+            if user_id not in self.notes_cache:
+                self.notes_cache[user_id] = {}
+            self.notes_cache[user_id][name] = content
 
     async def check_vote_access(self, user_id: int) -> bool:
         voter_cog = self.bot.get_cog('TopGGVoter')
@@ -232,19 +162,17 @@ class Notes(commands.Cog):
             user_id = interaction.user.id
 
             try:
-                async with self.cog.acquire_db() as db:
-                    await db.execute(
-                        """
-                        UPDATE user_notes
-                        SET note_name    = ?,
-                            note_content = ?,
-                            updated_at   = CURRENT_TIMESTAMP
-                        WHERE user_id = ?
-                          AND note_name = ?
-                        """,
-                        (new_name, new_content, user_id, self.old_name),
-                    )
-                    await db.commit()
+                await self.cog.bot.db.execute(
+                    """
+                    UPDATE user_notes
+                    SET note_name    = ?,
+                        note_content = ?,
+                        updated_at   = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                      AND note_name = ?
+                    """,
+                    (new_name, new_content, user_id, self.old_name),
+                )
 
                 if self.old_name != new_name:
                     self.cog.notes_cache[user_id].pop(self.old_name, None)
@@ -299,18 +227,16 @@ class Notes(commands.Cog):
             user_id = interaction.user.id
 
             try:
-                async with self.cog.acquire_db() as db:
-                    await db.execute(
-                        """
-                        INSERT INTO user_notes (user_id, note_name, note_content)
-                        VALUES (?, ?, ?) ON CONFLICT(user_id, note_name) DO
-                        UPDATE SET
-                            note_content = excluded.note_content,
-                            updated_at = CURRENT_TIMESTAMP
-                        """,
-                        (user_id, name, content),
-                    )
-                    await db.commit()
+                await self.cog.bot.db.execute(
+                    """
+                    INSERT INTO user_notes (user_id, note_name, note_content)
+                    VALUES (?, ?, ?) ON CONFLICT(user_id, note_name) DO
+                    UPDATE SET
+                        note_content = excluded.note_content,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (user_id, name, content),
+                )
 
                 if user_id not in self.cog.notes_cache:
                     self.cog.notes_cache[user_id] = {}
@@ -351,12 +277,10 @@ class Notes(commands.Cog):
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="notes")
-        async with self.acquire_db() as db:
-            rows = await export_table(
-                db,
-                "SELECT note_name, note_content, created_at, updated_at FROM user_notes WHERE user_id = ?",
-                (user_id,),
-            )
+        rows = await self.bot.db.execute(
+            "SELECT note_name, note_content, created_at, updated_at FROM user_notes WHERE user_id = ?",
+            (user_id,),
+        )
         if rows:
             chunk.global_data["notes"] = rows
         return chunk
@@ -367,11 +291,12 @@ class Notes(commands.Cog):
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "notes":
             return DataDeleteResult(feature_id="notes")
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM user_notes WHERE user_id = ?", (user_id,))
-            await db.commit()
+        count_rows = await self.bot.db.execute(
+            "SELECT COUNT(*) AS cnt FROM user_notes WHERE user_id = ?", (user_id,))
+        rows_affected = count_rows[0]["cnt"] if count_rows else 0
+        await self.bot.db.execute("DELETE FROM user_notes WHERE user_id = ?", (user_id,))
         self.notes_cache.pop(user_id, None)
-        return DataDeleteResult(feature_id="notes", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="notes", deleted=True, rows_affected=rows_affected)
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         return DataDeleteResult(feature_id="notes")
@@ -379,7 +304,8 @@ class Notes(commands.Cog):
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="notes")
 
-async def _get_notes_cog(interaction: discord.Interaction) -> Optional[Notes]:
+
+async def _get_notes_cog(interaction: discord.Interaction):
     return interaction.client.get_cog('Notes')
 
 
@@ -395,6 +321,7 @@ async def _get_names_autocomplete(interaction: discord.Interaction, current: str
         if current.lower() in name.lower()
     ]
     return choices[:25]
+
 
 @note_group.command(name="create", description="Open the UI to create a note")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -413,6 +340,7 @@ async def note_create(interaction: discord.Interaction):
         return await interaction.response.send_message(embed=embed, ephemeral=True)
 
     await interaction.response.send_modal(cog.NoteModal(cog))
+
 
 @note_group.command(name="edit", description="Edit an existing note")
 @app_commands.autocomplete(name=_get_names_autocomplete)
@@ -514,12 +442,10 @@ async def note_delete(interaction: discord.Interaction, name: str):
         try:
             deleted_content = user_notes[name]
 
-            async with cog.acquire_db() as db:
-                await db.execute(
-                    "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
-                    (user_id, name),
-                )
-                await db.commit()
+            await cog.bot.db.execute(
+                "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
+                (user_id, name),
+            )
 
             del cog.notes_cache[user_id][name]
 

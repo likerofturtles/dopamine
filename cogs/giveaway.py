@@ -12,7 +12,6 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from natsort import natsorted, ns
 
-from config import GDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
@@ -1585,12 +1584,10 @@ class Giveaways(commands.Cog):
         self.bot = bot
         self.giveaway_cache: Dict[int, dict] = {}
         self.participant_cache: Dict[int, Set[int]] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.check_giveaways.start()
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         for giveaway_id in self.giveaway_cache:
             self.bot.add_view(GiveawayJoinView(self, giveaway_id))
@@ -1598,113 +1595,13 @@ class Giveaways(commands.Cog):
     async def cog_unload(self):
         self.check_giveaways.cancel()
 
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    GDB_PATH,
-                    timeout=5,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await self._migrate_winner_role_to_text(db)
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaways (
-                    guild_id INTEGER,
-                    giveaway_id INTEGER,
-                    channel_id INTEGER,
-                    message_id INTEGER,
-                    prize TEXT,
-                    winners_count INTEGER,
-                    end_time INTEGER,
-                    host_id INTEGER,
-                    required_roles TEXT,
-                    req_behaviour INTEGER,
-                    blacklisted_roles TEXT,
-                    extra_entry_roles TEXT,
-                    winner_role_id TEXT,
-                    image_url TEXT,
-                    thumbnail_url TEXT,
-                    color TEXT,
-                    ended INTEGER DEFAULT 0,
-                    PRIMARY KEY (guild_id, giveaway_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaway_participants (
-                    guild_id INTEGER,
-                    giveaway_id INTEGER,
-                    user_id INTEGER,
-                    PRIMARY KEY (guild_id, giveaway_id, user_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaway_winners (
-                    giveaway_id INTEGER,
-                    user_id INTEGER,
-                    PRIMARY KEY (giveaway_id, user_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS templates (
-                    template_id TEXT PRIMARY KEY,
-                    creator_id INTEGER,
-                    creation_guild_id INTEGER,
-                    prize TEXT,
-                    winners INTEGER,
-                    duration TEXT,
-                    channel_id INTEGER,
-                    host_id INTEGER,
-                    required_roles TEXT,
-                    req_behaviour INTEGER,
-                    blacklisted_roles TEXT,
-                    extra_entries TEXT,
-                    winner_role_id TEXT,
-                    image TEXT,
-                    thumbnail TEXT,
-                    color TEXT,
-                    usage_count INTEGER DEFAULT 0,
-                    is_published INTEGER DEFAULT 0,
-                    review_status TEXT DEFAULT 'none'
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS review_config (
-                    guild_id INTEGER PRIMARY KEY,
-                    channel_id INTEGER
-                )
-            ''')
-
-            await db.commit()
-
-            await self._run_migrations(db)
+        await self.bot.db.wait_ready()
 
     async def _run_migrations(self, db: aiosqlite.Connection):
         """

@@ -1,15 +1,12 @@
 import asyncio
 import time
 from collections import deque
-from contextlib import asynccontextmanager
 from typing import Optional, Dict
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands, tasks
 
-from config import SKDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
@@ -164,13 +161,10 @@ class SkullboardCog(commands.Cog):
 
         self.skulled_messages: deque[int] = deque(maxlen=10000)
         self.guild_cooldowns: dict[int, float] = {}
-
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self._skullboard_tasks: Dict[int, asyncio.Task] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self._cache_cleanup.is_running():
             self._cache_cleanup.start()
@@ -185,65 +179,13 @@ class SkullboardCog(commands.Cog):
         if self._skullboard_tasks:
             await asyncio.gather(*self._skullboard_tasks.values(), return_exceptions=True)
 
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await asyncio.wait_for(conn.close(), timeout=1.0)
-                except (asyncio.QueueEmpty, asyncio.TimeoutError):
-                    break
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    self.SDB_PATH,
-                    timeout=5
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
     async def acquire_db(self):
-        if self.db_pool is None:
-            await self.init_pools()
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute("""
-                             CREATE TABLE IF NOT EXISTS guild_settings
-                             (
-                                 guild_id INTEGER PRIMARY KEY,
-                                 skull_threshold INTEGER DEFAULT 3,
-                                 skullboard_channel_id INTEGER,
-                                 enabled INTEGER DEFAULT 0
-                             )
-                             """)
-            try:
-                await db.execute("ALTER TABLE guild_settings ADD COLUMN enabled INTEGER DEFAULT 0")
-            except Exception:
-                pass
-
-            await db.execute("""
-                             CREATE TABLE IF NOT EXISTS skull_posts
-                             (
-                                 guild_id INTEGER NOT NULL,
-                                 source_message_id INTEGER NOT NULL,
-                                 skullboard_message_id INTEGER NOT NULL,
-                                 PRIMARY KEY (guild_id, source_message_id)
-                             )
-                             """)
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         """Load all data from DB into memory."""
@@ -312,26 +254,22 @@ class SkullboardCog(commands.Cog):
             self.skull_posts_cache[guild_id] = {}
         self.skull_posts_cache[guild_id][source_id] = skullboard_id
 
-        async with self.acquire_db() as db:
-            await db.execute("""
+        await self.bot.db.execute_write("""
                              INSERT INTO skull_posts (guild_id, source_message_id, skullboard_message_id)
                              VALUES (?, ?, ?) ON CONFLICT(guild_id, source_message_id) DO
                              UPDATE SET
                                  skullboard_message_id = excluded.skullboard_message_id
                              """, (guild_id, source_id, skullboard_id))
-            await db.commit()
 
     async def delete_skull_post(self, guild_id: int, source_id: int):
         """Remove from both DB and cache manually."""
         if guild_id in self.skull_posts_cache:
             self.skull_posts_cache[guild_id].pop(source_id, None)
 
-        async with self.acquire_db() as db:
-            await db.execute(
-                "DELETE FROM skull_posts WHERE guild_id = ? AND source_message_id = ?",
-                (guild_id, source_id)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "DELETE FROM skull_posts WHERE guild_id = ? AND source_message_id = ?",
+            (guild_id, source_id)
+        )
 
     def get_skull_post(self, guild_id: int, source_id: int) -> Optional[int]:
         """Pure cache read for performance."""

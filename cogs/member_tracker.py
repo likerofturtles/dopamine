@@ -1,14 +1,11 @@
-import asyncio
 import re
 from contextlib import asynccontextmanager
-from typing import Optional, Dict
+from typing import Dict
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands, tasks
 
-from config import MCTDB_PATH
 from utils.discord_health import (
     channel_can_send,
     is_access_error,
@@ -411,12 +408,10 @@ class TrackerDashboard(PrivateLayoutView):
 class MemberCountTracker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue] = None
         self.tracker_cache: Dict[int, dict] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self.member_count_monitor.is_running():
             self.member_count_monitor.start()
@@ -424,62 +419,13 @@ class MemberCountTracker(commands.Cog):
     async def cog_unload(self):
         self.member_count_monitor.cancel()
 
-        if self.db_pool:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-            self.db_pool = None
-        if hasattr(self, 'db') and self.db:
-            await self.db.close()
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(MCTDB_PATH, timeout=5.0)
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            try:
-                await db.execute("SELECT exclude_bots FROM member_tracker LIMIT 1")
-            except Exception:
-                try:
-                    await db.execute("ALTER TABLE member_tracker ADD COLUMN exclude_bots INTEGER DEFAULT 0")
-                    await db.commit()
-                except Exception as e:
-                    pass
-
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS member_tracker
-                             (
-                                 guild_id INTEGER PRIMARY KEY,
-                                 channel_id INTEGER,
-                                 is_active INTEGER DEFAULT 0,
-                                 member_goal INTEGER,
-                                 custom_format TEXT,
-                                 last_member_count INTEGER,
-                                 color INTEGER,
-                                 exclude_bots INTEGER DEFAULT 0
-                             )
-                             ''')
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         self.tracker_cache.clear()

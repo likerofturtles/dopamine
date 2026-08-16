@@ -3,16 +3,14 @@ import json
 import re
 import time
 from contextlib import asynccontextmanager
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands, tasks
 from discord.ui import Modal, TextInput
 
 from cogs.embed import UseEmbedPage
-from config import SMDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
@@ -831,11 +829,9 @@ class RepeatingMessages(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.message_cache: Dict[int, Dict[int, dict]] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self.send_repeating_messages.is_running():
             self.send_repeating_messages.start()
@@ -844,69 +840,13 @@ class RepeatingMessages(commands.Cog):
         if self.send_repeating_messages.is_running():
             self.send_repeating_messages.cancel()
 
-        if self.db_pool:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing connection during unload: {e}")
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(SMDB_PATH, timeout=5.0)
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
-    async def acquire_db(self) -> AsyncGenerator[aiosqlite.Connection, None]:
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+    async def acquire_db(self):
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scheduled_messages
-                (
-                    guild_id INTEGER,
-                    message_id INTEGER,
-                    name TEXT,
-                    channel_id INTEGER,
-                    message_content TEXT,
-                    frequency_seconds INTEGER,
-                    next_send_time REAL,
-                    is_active INTEGER DEFAULT 1,
-                    started_at REAL, PRIMARY KEY
-                (
-                    guild_id,
-                    message_id
-                )
-                    )
-                """
-            )
-            for sql in (
-                "ALTER TABLE scheduled_messages ADD COLUMN response_type TEXT DEFAULT 'text'",
-                "ALTER TABLE scheduled_messages ADD COLUMN embed_content TEXT",
-                "ALTER TABLE scheduled_messages ADD COLUMN embed_data TEXT",
-            ):
-                try:
-                    await db.execute(sql)
-                except Exception:
-                    pass
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_sm_active ON scheduled_messages(is_active, next_send_time)")
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         self.message_cache.clear()

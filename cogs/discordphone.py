@@ -6,14 +6,12 @@ import time
 from collections import deque
 
 import aiohttp
-import aiosqlite
 import discord
 import pyvips
 from beacon import beacon_commands
 from discord import app_commands
 from discord.ext import commands
 
-from config import DP_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 
@@ -21,30 +19,19 @@ PERM_STORAGE_CHANNEL_ID = 1476933186461106187
 
 
 class ConnectionPool:
-    def __init__(self, path: str, size: int = 5):
-        self.path = path
-        self.size = size
-        self.pool = asyncio.Queue()
+    def __init__(self, bot, path: str, size: int = 5):
+        self.bot = bot
 
     async def init(self):
-        for _ in range(self.size):
-            conn = await aiosqlite.connect(self.path)
-            await conn.execute("PRAGMA journal_mode=WAL;")
-            await conn.execute("PRAGMA synchronous=NORMAL;")
-            await self.pool.put(conn)
+        await self.bot.db.wait_ready()
 
     @contextlib.asynccontextmanager
     async def acquire(self):
-        conn = await self.pool.get()
-        try:
+        async with self.bot.db.acquire_db() as conn:
             yield conn
-        finally:
-            self.pool.put_nowait(conn)
 
     async def close(self):
-        while not self.pool.empty():
-            conn = await self.pool.get()
-            await conn.close()
+        pass
 
 class CallSession:
     def __init__(self, chan_a, chan_b, user_a, user_b):
@@ -170,7 +157,7 @@ class ReportModal(discord.ui.Modal, title='Report Message'):
 class DiscordPhone(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.pool = ConnectionPool(DP_PATH, size=5)
+        self.pool = ConnectionPool(bot, DP_PATH, size=5)
 
         self.users_cache = {}
         self.guilds_cache = {}
@@ -764,10 +751,8 @@ class DiscordPhone(commands.Cog):
         chunk = DataExportChunk(feature_id="discordphone")
         async with self.pool.acquire() as conn:
             guild_rows = await export_table(conn, "SELECT * FROM guilds WHERE id = ?", (guild_id,))
-            settings = await export_table(conn, "SELECT key, value FROM settings")
         chunk.guild_data[guild_id] = {
             "guild": guild_rows[0] if guild_rows else None,
-            "settings": settings,
         }
         return chunk
 

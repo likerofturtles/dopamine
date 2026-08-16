@@ -1,15 +1,12 @@
 import asyncio
 import codecs
 import time
-from contextlib import asynccontextmanager
 from typing import Optional, Dict
 
-import aiosqlite
 import discord
 from beacon import beacon_commands
 from discord.ext import commands
 
-from config import TDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 
@@ -18,74 +15,18 @@ class TempHideCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.DB_PATH = TDB_PATH
         self.message_cache: Dict[int, dict] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
-        self._max_pool_size = 5
 
     async def cog_load(self):
-        await self.init_pools(self._max_pool_size)
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         self.bot.add_view(RevealView(self, 0))
 
-    async def cog_unload(self):
-        if self.db_pool:
-            for _ in range(self._max_pool_size):
-                try:
-                    conn = await asyncio.wait_for(self.db_pool.get(), timeout=2.0)
-                    await conn.close()
-                except asyncio.TimeoutError:
-                    continue
-                except Exception:
-                    pass
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    self.DB_PATH,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS temp_messages
-                             (
-                                 message_id INTEGER PRIMARY KEY,
-                                 user_id INTEGER NOT NULL,
-                                 hidden_text TEXT NOT NULL,
-                                 timestamp REAL NOT NULL
-                             )
-                             ''')
-            await db.commit()
-
     async def populate_caches(self):
         self.message_cache.clear()
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM temp_messages") as cursor:
-                rows = await cursor.fetchall()
-                columns = [column[0] for column in cursor.description]
-                for row in rows:
-                    data = dict(zip(columns, row))
-                    self.message_cache[data["message_id"]] = data
-
+        rows = await self.bot.db.execute("SELECT * FROM temp_messages")
+        for data in rows:
+            self.message_cache[data["message_id"]] = data
 
     async def store_message(self, user_id: int, hidden_text: str, message_id: int, timestamp: float):
         data = {
@@ -94,23 +35,15 @@ class TempHideCog(commands.Cog):
             "hidden_text": hidden_text,
             "timestamp": timestamp
         }
-
-        async with self.acquire_db() as db:
-            await db.execute(
-                'INSERT INTO temp_messages (message_id, user_id, hidden_text, timestamp) VALUES (?, ?, ?, ?)',
-                (message_id, user_id, hidden_text, timestamp)
-            )
-            await db.commit()
-
+        await self.bot.db.execute(
+            'INSERT INTO temp_messages (message_id, user_id, hidden_text, timestamp) VALUES (?, ?, ?, ?)',
+            (message_id, user_id, hidden_text, timestamp)
+        )
         self.message_cache[message_id] = data
 
     async def delete_message(self, message_id: int):
-        async with self.acquire_db() as db:
-            await db.execute('DELETE FROM temp_messages WHERE message_id = ?', (message_id,))
-            await db.commit()
-
-        if message_id in self.message_cache:
-            del self.message_cache[message_id]
+        await self.bot.db.execute('DELETE FROM temp_messages WHERE message_id = ?', (message_id,))
+        self.message_cache.pop(message_id, None)
 
     async def get_message(self, message_id: int) -> Optional[tuple[int, str]]:
         data = self.message_cache.get(message_id)
@@ -142,9 +75,8 @@ class TempHideCog(commands.Cog):
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="temphide")
-        async with self.acquire_db() as db:
-            rows = await export_table(
-                db, "SELECT * FROM temp_messages WHERE user_id = ?", (user_id,))
+        rows = await export_table(
+            self.bot.db, "SELECT * FROM temp_messages WHERE user_id = ?", (user_id,))
         for row in rows:
             gid = await self._resolve_message_guild_id(row["message_id"])
             if gid is None:
@@ -156,8 +88,7 @@ class TempHideCog(commands.Cog):
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="temphide")
         messages = []
-        async with self.acquire_db() as db:
-            rows = await export_table(db, "SELECT * FROM temp_messages", ())
+        rows = await export_table(self.bot.db, "SELECT * FROM temp_messages", ())
         for row in rows:
             gid = await self._resolve_message_guild_id(row["message_id"])
             if gid == guild_id:
@@ -170,25 +101,20 @@ class TempHideCog(commands.Cog):
             return DataDeleteResult(feature_id="temphide")
         rows_affected = 0
         if guild_ids is None:
-            async with self.acquire_db() as db:
-                cur = await db.execute("DELETE FROM temp_messages WHERE user_id = ?", (user_id,))
-                rows_affected = cur.rowcount
-                await db.commit()
+            rows_affected = await self.bot.db.execute_write(
+                "DELETE FROM temp_messages WHERE user_id = ?", (user_id,))
             for mid, data in list(self.message_cache.items()):
                 if data["user_id"] == user_id:
                     del self.message_cache[mid]
         else:
-            async with self.acquire_db() as db:
-                rows = await export_table(
-                    db, "SELECT message_id FROM temp_messages WHERE user_id = ?", (user_id,))
+            rows = await export_table(
+                self.bot.db, "SELECT message_id FROM temp_messages WHERE user_id = ?", (user_id,))
             for row in rows:
                 gid = await self._resolve_message_guild_id(row["message_id"])
                 if gid not in guild_ids:
                     continue
-                async with self.acquire_db() as db:
-                    await db.execute(
-                        "DELETE FROM temp_messages WHERE message_id = ?", (row["message_id"],))
-                    await db.commit()
+                await self.bot.db.execute_write(
+                    "DELETE FROM temp_messages WHERE message_id = ?", (row["message_id"],))
                 self.message_cache.pop(row["message_id"], None)
                 rows_affected += 1
         return DataDeleteResult(feature_id="temphide", deleted=True, rows_affected=rows_affected)
@@ -197,23 +123,19 @@ class TempHideCog(commands.Cog):
         if feature_id and feature_id != "temphide":
             return DataDeleteResult(feature_id="temphide")
         rows_affected = 0
-        async with self.acquire_db() as db:
-            rows = await export_table(db, "SELECT message_id FROM temp_messages", ())
+        rows = await export_table(self.bot.db, "SELECT message_id FROM temp_messages", ())
         for row in rows:
             gid = await self._resolve_message_guild_id(row["message_id"])
             if gid != guild_id:
                 continue
-            async with self.acquire_db() as db:
-                await db.execute(
-                    "DELETE FROM temp_messages WHERE message_id = ?", (row["message_id"],))
-                await db.commit()
+            await self.bot.db.execute_write(
+                "DELETE FROM temp_messages WHERE message_id = ?", (row["message_id"],))
             self.message_cache.pop(row["message_id"], None)
             rows_affected += 1
         return DataDeleteResult(feature_id="temphide", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="temphide")
-
 
     @staticmethod
     async def send_error_reply(interaction_or_ctx, embed=None, message=None, ephemeral=True):
@@ -233,7 +155,7 @@ class TempHideCog(commands.Cog):
                     await interaction_or_ctx.followup.send(embed=embed, ephemeral=ephemeral)
                 else:
                     await interaction_or_ctx.followup.send(message, ephemeral=ephemeral)
-        except:
+        except Exception:
             pass
 
     async def handle_temphide(self, interaction_or_ctx, message_text: str):
@@ -293,7 +215,7 @@ class RevealView(discord.ui.View):
             await self.cog.delete_message(self.message_id)
         except discord.NotFound:
             await self.cog.delete_message(self.message_id)
-        except:
+        except Exception:
             pass
 
 

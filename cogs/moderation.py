@@ -1,7 +1,5 @@
-import asyncio
 import re
 import time
-from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Dict, Optional, List, Any, Union
 
@@ -12,7 +10,6 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from natsort import natsorted, ns
 
-from config import DB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure, resolve_guild_channel, channel_can_send
@@ -1919,17 +1916,15 @@ class Moderation(commands.Cog):
         self.settings_cache: Dict[int, Dict[str, Any]] = {}
         self.live_case_views: Dict[int, AllActiveInfractionsPage] = {}
 
-        self.db_pool: Optional[asyncio.Queue] = None
         self.ctx_menu = app_commands.ContextMenu(
             name='Report Message to Server Mods',
             callback=self.report_message_menu
         )
         self.bot.tree.add_command(self.ctx_menu)
-        self.manager = LoggingManager()
+        self.manager = LoggingManager(bot.db)
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         self.bot.add_view(ReportActionView(cog=self))
         self.unban_loop.start()
@@ -1940,122 +1935,6 @@ class Moderation(commands.Cog):
         self.unban_loop.stop()
         self.decay_loop.stop()
         self.live_case_refresh_loop.stop()
-
-        if self.db_pool:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing connection during unload: {e}")
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(DB_PATH, timeout=5)
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.executescript('''
-                CREATE TABLE IF NOT EXISTS users (
-                    guild_id INTEGER,
-                    user_id INTEGER,
-                    points INTEGER DEFAULT 0,
-                    last_punishment INTEGER,
-                    last_decay INTEGER,
-                    total_decayed INTEGER DEFAULT 0,
-                    PRIMARY KEY (guild_id, user_id)
-                );
-                CREATE TABLE IF NOT EXISTS actions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER,
-                    action_type TEXT,
-                    duration INTEGER DEFAULT 0,
-                    points INTEGER
-                );
-                CREATE TABLE IF NOT EXISTS ban_schedule (
-                    guild_id INTEGER, 
-                    user_id INTEGER,
-                    unban_at INTEGER,
-                    PRIMARY KEY (guild_id, user_id)
-                );
-                CREATE TABLE IF NOT EXISTS settings (
-                    guild_id INTEGER PRIMARY KEY,
-                    punishment_dm INTEGER DEFAULT 1,
-                    punishment_log INTEGER DEFAULT 1,
-                    decay_interval INTEGER DEFAULT 14,
-                    rejoin_points INTEGER DEFAULT 4,
-                    simple_mode INTEGER DEFAULT 1,
-                    msg_report_enabled INTEGER DEFAULT 0,
-                    msg_report_channel INTEGER,
-                    msg_report_roles TEXT,
-                    decay_log_enabled INTEGER DEFAULT 0,
-                    show_medals INTEGER DEFAULT 1
-                );
-                CREATE TABLE IF NOT EXISTS infractions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER NOT NULL,
-                    case_number INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    moderator_id INTEGER NOT NULL,
-                    amount INTEGER NOT NULL,
-                    reason TEXT,
-                    punishment_type TEXT,
-                    punishment_duration INTEGER DEFAULT 0,
-                    points_after INTEGER NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    UNIQUE (guild_id, case_number)
-                );
-                CREATE TABLE IF NOT EXISTS pending_punishments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    moderator_id INTEGER NOT NULL,
-                    reason TEXT,
-                    created_at INTEGER NOT NULL,
-                    timeout_until INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_infractions_guild_user ON infractions(guild_id, user_id);
-                CREATE INDEX IF NOT EXISTS idx_infractions_guild_case ON infractions(guild_id, case_number);
-            ''')
-
-            async with db.execute("PRAGMA table_info(settings)") as cursor:
-                columns = [info[1] for info in await cursor.fetchall()]
-
-            if "msg_report_enabled" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN msg_report_enabled INTEGER DEFAULT 0")
-            if "msg_report_channel" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN msg_report_channel INTEGER")
-            if "msg_report_roles" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN msg_report_roles TEXT")
-            if "decay_log_enabled" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN decay_log_enabled INTEGER DEFAULT 0")
-            if "show_medals" not in columns:
-                await db.execute("ALTER TABLE settings ADD COLUMN show_medals INTEGER DEFAULT 1")
-
-            async with db.execute("PRAGMA table_info(users)") as cursor:
-                columns = [info[1] for info in await cursor.fetchall()]
-
-            if "total_decayed" not in columns:
-                await db.execute("ALTER TABLE users ADD COLUMN total_decayed INTEGER DEFAULT 0")
-
-            await db.commit()
 
     def _row_to_infraction(self, row) -> dict:
         return {
@@ -2149,7 +2028,7 @@ class Moderation(commands.Cog):
 
         async with self.acquire_db() as db:
             async with db.execute(
-                    "SELECT user_id, points, last_punishment, last_decay FROM users WHERE guild_id = ? AND points > 0",
+                    "SELECT user_id, points, last_punishment, last_decay FROM moderation_users WHERE guild_id = ? AND points > 0",
                     (guild_id,)
             ) as cursor:
                 async for row in cursor:
@@ -2230,7 +2109,7 @@ class Moderation(commands.Cog):
 
         async with self.acquire_db() as db:
             await db.execute(
-                '''UPDATE users SET last_punishment = ?, last_decay = ?
+                '''UPDATE moderation_users SET last_punishment = ?, last_decay = ?
                    WHERE guild_id = ? AND user_id = ?''',
                 (last_ts, data["last_decay"], guild_id, user_id)
             )
@@ -2345,7 +2224,7 @@ class Moderation(commands.Cog):
         self.settings_cache.clear()
 
         async with self.acquire_db() as db:
-            async with db.execute("SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM users") as cursor:
+            async with db.execute("SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM moderation_users") as cursor:
                 async for row in cursor:
                     self.user_cache[f"{row[0]}:{row[1]}"] = {
                         "points": row[2],
@@ -2444,7 +2323,7 @@ class Moderation(commands.Cog):
             self.user_cache[key] = data
             async with self.acquire_db() as db:
                 await db.execute(
-                    "INSERT OR IGNORE INTO users (guild_id, user_id, points, total_decayed) VALUES (?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO moderation_users (guild_id, user_id, points, total_decayed) VALUES (?, ?, ?, ?)",
                     (guild_id, user_id, 0, 0)
                 )
                 await db.commit()
@@ -2464,7 +2343,7 @@ class Moderation(commands.Cog):
 
         async with self.acquire_db() as db:
             await db.execute('''
-                             UPDATE users
+                             UPDATE moderation_users
                              SET points          = ?,
                                  last_punishment = ?,
                                  last_decay      = ?,
@@ -2616,90 +2495,87 @@ class Moderation(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def unban_loop(self):
+        await self.bot.db.wait_ready()
         now = int(discord.utils.utcnow().timestamp())
-        async with self.acquire_db() as db:
-            async with db.execute(
-                    "SELECT guild_id, user_id FROM ban_schedule WHERE unban_at <= ?",
-                    (now,)
-            ) as cursor:
-                rows = await cursor.fetchall()
+        rows = await self.bot.db.execute(
+                "SELECT guild_id, user_id FROM ban_schedule WHERE unban_at <= ?",
+                (now,)
+        )
+        for row in rows:
+            guild_id = row["guild_id"]
+            user_id = row["user_id"]
+            guild = self.bot.get_guild(guild_id) or await self.bot.fetch_guild(guild_id)
+            if guild:
+                try:
+                    await guild.unban(discord.Object(id=user_id), reason="Temporary ban expired")
 
-            for guild_id, user_id in rows:
-                guild = self.bot.get_guild(guild_id) or await self.bot.fetch_guild(guild_id)
-                if guild:
-                    try:
-                        await guild.unban(discord.Object(id=user_id), reason="Temporary ban expired")
+                    settings = self.settings_cache.get(guild_id, {})
+                    rejoin_pts = settings.get("rejoin_points", 4)
+                    if rejoin_pts != -1:
+                        await self.update_user_points(guild_id, user_id, rejoin_pts)
 
-                        settings = self.settings_cache.get(guild_id, {})
-                        rejoin_pts = settings.get("rejoin_points", 4)
-                        if rejoin_pts != -1:
-                            await self.update_user_points(guild_id, user_id, rejoin_pts)
+                except discord.NotFound:
+                    pass
+                except Exception as e:
+                    print(f"Error unbanning {user_id} in {guild_id}: {e}")
 
-                    except discord.NotFound:
-                        pass
-                    except Exception as e:
-                        print(f"Error unbanning {user_id} in {guild_id}: {e}")
-
-                await db.execute(
-                    "DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-                )
-            await db.commit()
+            await self.bot.db.execute(
+                "DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id)
+            )
 
     @tasks.loop(hours=6)
     async def decay_loop(self):
+        await self.bot.db.wait_ready()
         now = int(discord.utils.utcnow().timestamp())
 
         guild_decays = {}
 
-        async with self.acquire_db() as db:
-            for key, data in list(self.user_cache.items()):
-                guild_id_str, user_id_str = key.split(":")
-                guild_id, user_id = int(guild_id_str), int(user_id_str)
+        for key, data in list(self.user_cache.items()):
+            guild_id_str, user_id_str = key.split(":")
+            guild_id, user_id = int(guild_id_str), int(user_id_str)
 
-                points = data["points"]
-                last_p = data["last_punishment"]
-                last_d = data["last_decay"]
+            points = data["points"]
+            last_p = data["last_punishment"]
+            last_d = data["last_decay"]
 
-                if points <= 0 or not last_p:
-                    continue
+            if points <= 0 or not last_p:
+                continue
 
-                settings = self.settings_cache.get(guild_id, {})
-                days = settings.get("decay_interval", 14)
+            settings = self.settings_cache.get(guild_id, {})
+            days = settings.get("decay_interval", 14)
 
-                if days == 0: continue
+            if days == 0: continue
 
-                interval_seconds = days * 86400
+            interval_seconds = days * 86400
 
-                reference_ts = last_d if (last_d and last_d > last_p) else last_p
+            reference_ts = last_d if (last_d and last_d > last_p) else last_p
 
-                elapsed = now - reference_ts
-                periods = elapsed // interval_seconds
+            elapsed = now - reference_ts
+            periods = elapsed // interval_seconds
 
-                if periods > 0:
-                    new_points = max(0, points - periods)
-                    new_decay_ts = reference_ts + (periods * interval_seconds)
-                    decayed_amount = points - new_points
-                    new_total_decayed = data.get('total_decayed', 0) + decayed_amount
+            if periods > 0:
+                new_points = max(0, points - periods)
+                new_decay_ts = reference_ts + (periods * interval_seconds)
+                decayed_amount = points - new_points
+                new_total_decayed = data.get('total_decayed', 0) + decayed_amount
 
-                    data["points"] = new_points
-                    data["last_decay"] = new_decay_ts if new_points > 0 else None
-                    data["total_decayed"] = new_total_decayed
+                data["points"] = new_points
+                data["last_decay"] = new_decay_ts if new_points > 0 else None
+                data["total_decayed"] = new_total_decayed
 
-                    await db.execute('''
-                                     UPDATE users
-                                     SET points        = ?,
-                                         last_decay    = ?,
-                                         total_decayed = ?
-                                     WHERE guild_id = ?
-                                       AND user_id = ?
-                                     ''', (new_points, data["last_decay"], new_total_decayed, guild_id, user_id))
+                await self.bot.db.execute('''
+                                 UPDATE moderation_users
+                                 SET points        = ?,
+                                     last_decay    = ?,
+                                     total_decayed = ?
+                                 WHERE guild_id = ?
+                                   AND user_id = ?
+                                 ''', (new_points, data["last_decay"], new_total_decayed, guild_id, user_id))
 
-                    if guild_id not in guild_decays:
-                        guild_decays[guild_id] = []
-                    guild_decays[guild_id].append((user_id, decayed_amount))
-
-            await db.commit()
+                if guild_id not in guild_decays:
+                    guild_decays[guild_id] = []
+                guild_decays[guild_id].append((user_id, decayed_amount))
 
         for guild_id, decays in guild_decays.items():
             settings = self.settings_cache.get(guild_id, {})
@@ -3259,7 +3135,7 @@ class Moderation(commands.Cog):
         chunk = DataExportChunk(feature_id="moderation")
         async with self.acquire_db() as db:
             if guild_ids is None:
-                users = await export_table(db, "SELECT * FROM users WHERE user_id = ?", (user_id,))
+                users = await export_table(db, "SELECT * FROM moderation_users WHERE user_id = ?", (user_id,))
                 infractions = await export_table(
                     db, "SELECT * FROM infractions WHERE user_id = ?", (user_id,))
             else:
@@ -3267,7 +3143,7 @@ class Moderation(commands.Cog):
                 params = (user_id, *guild_ids)
                 users = await export_table(
                     db,
-                    f"SELECT * FROM users WHERE user_id = ? AND guild_id IN ({placeholders})",
+                    f"SELECT * FROM moderation_users WHERE user_id = ? AND guild_id IN ({placeholders})",
                     params,
                 )
                 infractions = await export_table(
@@ -3286,7 +3162,7 @@ class Moderation(commands.Cog):
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="moderation")
         async with self.acquire_db() as db:
-            users = await export_table(db, "SELECT * FROM users WHERE guild_id = ?", (guild_id,))
+            users = await export_table(db, "SELECT * FROM moderation_users WHERE guild_id = ?", (guild_id,))
             actions = await export_table(db, "SELECT * FROM actions WHERE guild_id = ?", (guild_id,))
             ban_schedule = await export_table(
                 db, "SELECT * FROM ban_schedule WHERE guild_id = ?", (guild_id,))
