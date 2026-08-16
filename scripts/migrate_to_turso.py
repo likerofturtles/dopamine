@@ -212,7 +212,11 @@ def create_target_schema(target_conn):
         );
 
         CREATE TABLE IF NOT EXISTS cat_channels (channel_id INTEGER PRIMARY KEY);
-        CREATE TABLE IF NOT EXISTS cat_images (id INTEGER PRIMARY KEY AUTOINCREMENT, image_data BLOB);
+        CREATE TABLE IF NOT EXISTS cat_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            image_data BLOB,
+            user_id INTEGER DEFAULT 758576879715483719
+        );
         CREATE TABLE IF NOT EXISTS daily_settings (key TEXT PRIMARY KEY, value TEXT);
 
         CREATE TABLE IF NOT EXISTS selfpurge_guild_settings (

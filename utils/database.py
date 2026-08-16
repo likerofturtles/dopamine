@@ -174,7 +174,13 @@ class DatabaseManager:
 
             -- daily.py tables (collision renames applied)
             CREATE TABLE IF NOT EXISTS cat_channels (channel_id INTEGER PRIMARY KEY);
-            CREATE TABLE IF NOT EXISTS cat_images (id INTEGER PRIMARY KEY AUTOINCREMENT, image_data BLOB);
+            CREATE TABLE IF NOT EXISTS cat_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                image_data BLOB,
+                user_id INTEGER DEFAULT 758576879715483719
+            );
+            -- ensure column exists for existing tables
+            PRAGMA table_info(cat_images);
             CREATE TABLE IF NOT EXISTS daily_settings (key TEXT PRIMARY KEY, value TEXT);
 
             -- selfpurge.py tables (collision renames applied)

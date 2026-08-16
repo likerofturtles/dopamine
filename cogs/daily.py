@@ -54,7 +54,14 @@ class AddImageModal(discord.ui.Modal, title="Add Cat Image"):
             required=True,
             max_values=10
         )
+        self.user_id_input = discord.ui.TextInput(
+            label="Uploader User ID (Optional)",
+            placeholder="Discord User ID (defaults to 758576879715483719)...",
+            required=False,
+            max_length=20
+        )
         self.add_item(discord.ui.Label(text="Select Image", description="Upload a PNG, JPEG, or GIF image to add to the daily cat database.", component=self.file_upload))
+        self.add_item(self.user_id_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -62,6 +69,14 @@ class AddImageModal(discord.ui.Modal, title="Add Cat Image"):
         uploaded_files = self.file_upload.values
         if not uploaded_files:
             return await interaction.followup.send("No files uploaded.", ephemeral=True)
+
+        raw_uid = self.user_id_input.value.strip() if self.user_id_input.value else ""
+        uploader_id = 758576879715483719
+        if raw_uid:
+            try:
+                uploader_id = int(raw_uid)
+            except ValueError:
+                pass
 
         valid_types = {'image/png', 'image/jpeg', 'image/gif'}
         saved_count = 0
@@ -74,7 +89,7 @@ class AddImageModal(discord.ui.Modal, title="Add Cat Image"):
 
             try:
                 image_bytes = await uploaded_file.read()
-                await self.cog.bot.db.execute("INSERT INTO cat_images (image_data) VALUES (?)", (image_bytes,))
+                await self.cog.bot.db.execute("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", (image_bytes, uploader_id))
                 saved_count += 1
             except Exception as e:
                 failed_files.append(f"`{uploaded_file.filename}` ({e})")
@@ -275,7 +290,7 @@ class DailyCats(commands.Cog):
 
     @commands.command(name="catadd", hidden=True)
     @commands.is_owner()
-    async def catadd(self, ctx: commands.Context):
+    async def catadd(self, ctx: commands.Context, user_id: int = 758576879715483719):
         if not ctx.message.attachments:
             return await ctx.send("Please attach at least one image.")
 
@@ -290,7 +305,7 @@ class DailyCats(commands.Cog):
 
             try:
                 image_bytes = await attachment.read()
-                await self.bot.db.execute("INSERT INTO cat_images (image_data) VALUES (?)", (image_bytes,))
+                await self.bot.db.execute("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", (image_bytes, user_id))
                 images_added += 1
             except Exception as e:
                 await ctx.send(f"Failed to add {attachment.filename}: {e}", delete_after=10)
@@ -308,14 +323,35 @@ class DailyCats(commands.Cog):
         now = datetime.now()
         if now >= self.next_send_time:
             image_blob = None
-            rows = await self.bot.db.execute("SELECT id FROM cat_images")
-            ids = [row["id"] for row in rows]
+            uploader_id = 758576879715483719
+            rows = await self.bot.db.execute("SELECT id, user_id FROM cat_images")
 
-            if ids:
-                random_id = random.choice(ids)
+            if rows:
+                chosen = random.choice(rows)
+                random_id = chosen["id"]
+                uploader_id = chosen["user_id"] if chosen["user_id"] is not None else 758576879715483719
                 row = await self.bot.db.execute("SELECT image_data FROM cat_images WHERE id = ?", (random_id,))
                 if row:
                     image_blob = row[0]["image_data"]
+
+            user = self.bot.get_user(uploader_id)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(uploader_id)
+                except Exception:
+                    user = None
+
+            if uploader_id == 758576879715483719:
+                display_name = user.display_name if user else "Unknown User"
+                the_string = f"{display_name} from Dopamine Studios"
+            else:
+                if user:
+                    the_string = user.display_name
+                else:
+                    the_string = "Unknown User"
+
+            courtesy_line = f"Courtesy: {the_string}"
+            content = f"Today's Cat Pic ({courtesy_line})"
 
             async def send_to_channel(channel_id):
                 guild_id = None
@@ -346,7 +382,7 @@ class DailyCats(commands.Cog):
                 if channel_id in self.active_cat_channels and image_blob:
                     try:
                         file = discord.File(io.BytesIO(image_blob), filename="daily_cat.png")
-                        await ch.send(content="Today's Cat Pic:", file=file)
+                        await ch.send(content=content, file=file)
                         await asyncio.sleep(0.25)
                     except Exception as e:
                         if is_access_error(e):
