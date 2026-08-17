@@ -456,12 +456,21 @@ class DailyCats(commands.Cog):
         return [DataFeatureMeta(
             feature_id="daily",
             name="Daily Cats",
+            user_export=True,
+            user_delete=True,
             guild_export=True,
             guild_delete=True,
         )]
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
-        return DataExportChunk(feature_id="daily")
+        chunk = DataExportChunk(feature_id="daily")
+        rows = await self.bot.db.execute("SELECT id FROM cat_images WHERE user_id = ?", (user_id,))
+        image_ids = [r["id"] for r in rows]
+        chunk.global_data["cat_images"] = {
+            "count": len(image_ids),
+            "image_ids": image_ids
+        }
+        return chunk
 
     async def _guild_cat_channels(self, guild: discord.Guild) -> list[int]:
         channels = []
@@ -484,7 +493,12 @@ class DailyCats(commands.Cog):
         return chunk
 
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
-        return DataDeleteResult(feature_id="daily")
+        if feature_id and feature_id != "daily":
+            return DataDeleteResult(feature_id="daily")
+        count_rows = await self.bot.db.execute("SELECT COUNT(*) AS cnt FROM cat_images WHERE user_id = ?", (user_id,))
+        rows_affected = count_rows[0]["cnt"] if count_rows else 0
+        await self.bot.db.execute("DELETE FROM cat_images WHERE user_id = ?", (user_id,))
+        return DataDeleteResult(feature_id="daily", deleted=True, rows_affected=rows_affected)
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "daily":
