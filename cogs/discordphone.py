@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import io
 import random
 import time
@@ -17,21 +16,6 @@ from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMe
 
 PERM_STORAGE_CHANNEL_ID = 1476933186461106187
 
-
-class ConnectionPool:
-    def __init__(self, bot, path: str, size: int = 5):
-        self.bot = bot
-
-    async def init(self):
-        await self.bot.db.wait_ready()
-
-    @contextlib.asynccontextmanager
-    async def acquire(self):
-        async with self.bot.db.acquire_db() as conn:
-            yield conn
-
-    async def close(self):
-        pass
 
 class CallSession:
     def __init__(self, chan_a, chan_b, user_a, user_b):
@@ -157,7 +141,6 @@ class ReportModal(discord.ui.Modal, title='Report Message'):
 class DiscordPhone(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.pool = ConnectionPool(bot, DP_PATH, size=5)
 
         self.users_cache = {}
         self.guilds_cache = {}
@@ -168,8 +151,6 @@ class DiscordPhone(commands.Cog):
         self.active_calls = {}
         self.message_map = {}
         self.queue = []
-        self.active_calls = {}
-        self.message_map = {}
 
         self.skip_cooldowns = {}
         self.last_partner = {}
@@ -181,49 +162,28 @@ class DiscordPhone(commands.Cog):
         self.bot.tree.add_command(self.report_ctx_menu)
 
     async def cog_load(self):
-        self.bot.loop.create_task(self.init_db())
+        await self.bot.db.wait_ready()
+        await self.populate_caches()
         self.bot.add_view(ReportView())
 
     async def cog_unload(self):
-
         for call in self.active_calls.values():
             if call.timeout_task:
                 call.timeout_task.cancel()
 
-        await self.pool.close()
+    async def populate_caches(self):
+        users = await self.bot.db.execute("SELECT id, reported, created, warned FROM discordphone_users")
+        for row in users:
+            self.users_cache[row["id"]] = {"reported": row["reported"], "created": row["created"], "warned": row["warned"]}
 
-    async def init_db(self):
-        await self.pool.init()
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY, reported INTEGER DEFAULT 0, created INTEGER DEFAULT 0, warned INTEGER DEFAULT 0
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS guilds (
-                    id INTEGER PRIMARY KEY, reported INTEGER DEFAULT 0, created INTEGER DEFAULT 0, warned INTEGER DEFAULT 0
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY, value TEXT
-                )
-            """)
-            await conn.commit()
+        guilds = await self.bot.db.execute("SELECT id, reported, created, warned FROM discordphone_guilds")
+        for row in guilds:
+            self.guilds_cache[row["id"]] = {"reported": row["reported"], "created": row["created"], "warned": row["warned"]}
 
-            async with conn.execute("SELECT id, reported, created, warned FROM users") as cursor:
-                async for row in cursor:
-                    self.users_cache[row[0]] = {"reported": row[1], "created": row[2], "warned": row[3]}
-
-            async with conn.execute("SELECT id, reported, created, warned FROM guilds") as cursor:
-                async for row in cursor:
-                    self.guilds_cache[row[0]] = {"reported": row[1], "created": row[2], "warned": row[3]}
-
-            async with conn.execute("SELECT key, value FROM settings") as cursor:
-                async for row in cursor:
-                    if row[0] == "log_channel":
-                        self.settings_cache["log_channel"] = int(row[1])
+        settings = await self.bot.db.execute("SELECT key, value FROM discordphone_settings")
+        for row in settings:
+            if row["key"] == "log_channel":
+                self.settings_cache["log_channel"] = int(row["value"])
 
     async def try_match(self, channel, user, interaction: discord.Interaction | commands.Context):
         rules_str = "[DiscordPhone Rules](<https://docs.google.com/document/d/1ZuoKDQCrLMcY72PLW9kzTM7a1sS0y6mzyF_eNwV3low/edit?tab=t.0>)"
@@ -279,13 +239,12 @@ class DiscordPhone(commands.Cog):
         self.bot.loop.create_task(self._db_write(table, id_, field, cache[id_][field]))
 
     async def _db_write(self, table: str, id_: int, field: str, new_val: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute(f"""
-                INSERT INTO {table} (id, reported, created, warned)
-                VALUES (?, 0, 0, 0)
-                ON CONFLICT(id) DO UPDATE SET {field} = ?
-            """, (id_, new_val))
-            await conn.commit()
+        t_name = f"discordphone_{table}"
+        await self.bot.db.execute_write(f"""
+            INSERT INTO {t_name} (id, reported, created, warned)
+            VALUES (?, 0, 0, 0)
+            ON CONFLICT(id) DO UPDATE SET {field} = ?
+        """, (id_, new_val))
 
     async def download_image(self, url: str) -> bytes or None:
         async with aiohttp.ClientSession() as session:
@@ -518,6 +477,7 @@ class DiscordPhone(commands.Cog):
             chan = self.bot.get_channel(c_id) or await self.bot.fetch_channel(c_id)
             if not await self.try_match(chan, u_obj):
                 self.queue.append((c_id, u_obj))
+
     @dp_group.command(name="hangup", description="Hangup the active DiscordPhone call")
     async def hangup(self, interaction: discord.Interaction):
         if self.waiting_channel and self.waiting_channel.id == interaction.channel.id:
@@ -663,11 +623,11 @@ class DiscordPhone(commands.Cog):
     async def zt_command(self, interaction: discord.Interaction):
         self.settings_cache["log_channel"] = interaction.channel.id
 
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+        async with self.bot.db.acquire_db() as db:
+            await db.execute(
+                "INSERT INTO discordphone_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
                 ("log_channel", str(interaction.channel.id), str(interaction.channel.id)))
-            await conn.commit()
+            await db.commit()
 
         await interaction.response.send_message("Log and Reports channel has been set to this channel.", ephemeral=True)
 
@@ -741,16 +701,16 @@ class DiscordPhone(commands.Cog):
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="discordphone")
-        async with self.pool.acquire() as conn:
-            rows = await export_table(conn, "SELECT * FROM users WHERE id = ?", (user_id,))
+        async with self.bot.db.acquire_db() as conn:
+            rows = await export_table(conn, "SELECT * FROM discordphone_users WHERE id = ?", (user_id,))
         if rows:
             chunk.global_data["user"] = rows[0]
         return chunk
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="discordphone")
-        async with self.pool.acquire() as conn:
-            guild_rows = await export_table(conn, "SELECT * FROM guilds WHERE id = ?", (guild_id,))
+        async with self.bot.db.acquire_db() as conn:
+            guild_rows = await export_table(conn, "SELECT * FROM discordphone_guilds WHERE id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {
             "guild": guild_rows[0] if guild_rows else None,
         }
@@ -759,8 +719,8 @@ class DiscordPhone(commands.Cog):
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "discordphone":
             return DataDeleteResult(feature_id="discordphone")
-        async with self.pool.acquire() as conn:
-            cur = await conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        async with self.bot.db.acquire_db() as conn:
+            cur = await conn.execute("DELETE FROM discordphone_users WHERE id = ?", (user_id,))
             await conn.commit()
             rows_affected = cur.rowcount
         self.users_cache.pop(user_id, None)
@@ -769,8 +729,8 @@ class DiscordPhone(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "discordphone":
             return DataDeleteResult(feature_id="discordphone")
-        async with self.pool.acquire() as conn:
-            cur = await conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
+        async with self.bot.db.acquire_db() as conn:
+            cur = await conn.execute("DELETE FROM discordphone_guilds WHERE id = ?", (guild_id,))
             await conn.commit()
             rows_affected = cur.rowcount
         self.guilds_cache.pop(guild_id, None)
