@@ -1118,7 +1118,7 @@ class SearchModal(discord.ui.Modal):
             async with cog.acquire_db() as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute("SELECT * FROM templates WHERE template_id = ?", (query,)) as cursor:
-                    row = await cursor.fetchone()
+                    row = cursor.fetchone()
 
             if not row:
                 return await interaction.response.send_message(
@@ -1648,7 +1648,7 @@ class Giveaways(commands.Cog):
         multiple role IDs.
         """
         async with db.execute("PRAGMA table_info(giveaways)") as cursor:
-            columns = await cursor.fetchall()
+            columns = cursor.fetchall()
             winner_role_col = next((c for c in columns if c[1] == "winner_role_id"), None)
 
             if not winner_role_col or winner_role_col[2].upper() != "TEXT":
@@ -1706,7 +1706,7 @@ class Giveaways(commands.Cog):
 
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM giveaways WHERE ended = 0") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 columns = [column[0] for column in cursor.description]
                 for row in rows:
                     data = dict(zip(columns, row))
@@ -1718,7 +1718,7 @@ class Giveaways(commands.Cog):
                 placeholders = ", ".join(['?'] * len(self.giveaway_cache))
                 query = f"SELECT giveaway_id, user_id FROM giveaway_participants WHERE giveaway_id in ({placeholders})"
                 async with db.execute(query, list(self.giveaway_cache.keys())) as cursor:
-                    participant_rows = await cursor.fetchall()
+                    participant_rows = cursor.fetchall()
                     for giveaway_id, user_id in participant_rows:
                         if giveaway_id in self.participant_cache:
                             self.participant_cache[giveaway_id].add(user_id)
@@ -1742,7 +1742,7 @@ class Giveaways(commands.Cog):
             async with self.acquire_db() as db:
                 async with db.execute("SELECT * FROM giveaways WHERE giveaway_id = ? AND guild_id = ?",
                                       (giveaway_id, guild_id)) as cursor:
-                    rows = await cursor.fetchall()
+                    rows = cursor.fetchall()
                     if not rows: return
                     columns = [column[0] for column in cursor.description]
                     g = dict(zip(columns, rows))
@@ -1758,7 +1758,7 @@ class Giveaways(commands.Cog):
             async with self.acquire_db() as db:
                 async with db.execute("SELECT user_id FROM giveaway_participants WHERE giveaway_id = ?",
                                       (giveaway_id,)) as cursor:
-                    rows = await cursor.fetchall()
+                    rows = cursor.fetchall()
                     raw_participants = [r[0] for r in rows]
 
         pool = []
@@ -1988,7 +1988,7 @@ class Giveaways(commands.Cog):
 
             db.row_factory = aiosqlite.Row
             async with db.execute(query, args) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
 
             results = []
             for row in rows:
@@ -2034,7 +2034,7 @@ class Giveaways(commands.Cog):
             async with db.execute(
                     "SELECT usage_count, is_published, review_status FROM templates WHERE template_id = ?",
                     (template_id,)) as cursor:
-                existing = await cursor.fetchone()
+                existing = cursor.fetchone()
 
             if existing:
                 data['usage_count'] = existing[0]
@@ -2105,7 +2105,7 @@ class Giveaways(commands.Cog):
     async def send_to_review(self, template_id, interaction):
         async with self.acquire_db() as db:
             async with db.execute("SELECT channel_id FROM review_config LIMIT 1") as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 if not row: return
                 channel_id = row[0]
 
@@ -2114,7 +2114,7 @@ class Giveaways(commands.Cog):
 
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM templates WHERE template_id = ?", (template_id,)) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 if not row: return
                 t = dict(zip([c[0] for c in cursor.description], row))
 
@@ -2131,7 +2131,7 @@ class Giveaways(commands.Cog):
     async def notify_review_channel_edit(self, t, guild_id):
         async with self.acquire_db() as db:
             async with db.execute("SELECT channel_id FROM review_config LIMIT 1") as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 if not row: return
                 channel_id = row[0]
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
@@ -2169,7 +2169,7 @@ class Giveaways(commands.Cog):
             async with self.acquire_db() as db:
                 async with db.execute("SELECT giveaway_id, prize FROM giveaways WHERE guild_id = ?",
                                       (interaction.guild_id,)) as cursor:
-                    rows = await cursor.fetchall()
+                    rows = cursor.fetchall()
                     data_source = [(row[0], {"prize": row[1]}) for row in rows]
 
         for i, (giveaway_id, data) in enumerate(data_source, 1):
@@ -2237,12 +2237,12 @@ class Giveaways(commands.Cog):
         async with self.acquire_db() as db:
             async with db.execute("SELECT prize FROM giveaways WHERE giveaway_id = ? and guild_id = ?",
                                   (giveaway_id, interaction.guild.id,)) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 prize = row[0] if row else "Unknown Prize"
             async with db.execute(
                     "SELECT channel_id, message_id, prize FROM giveaways WHERE giveaway_id = ? AND guild_id = ?",
                     (giveaway_id, interaction.guild.id,)) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
 
             if not row:
                 return await interaction.response.send_message("Giveaway not found.", ephemeral=True)
@@ -2282,7 +2282,7 @@ class Giveaways(commands.Cog):
             async with db.execute(
                     "SELECT prize, winner_role_id, channel_id, ended FROM giveaways WHERE giveaway_id = ?",
                     (giveaway_id,)) as cursor:
-                g = await cursor.fetchone()
+                g = cursor.fetchone()
 
             if not g:
                 return await interaction.response.send_message("Giveaway data not found.", ephemeral=True)
@@ -2318,13 +2318,13 @@ class Giveaways(commands.Cog):
                 async with db.execute(
                         "SELECT user_id FROM giveaway_participants WHERE giveaway_id = ? AND guild_id = ?",
                         (giveaway_id, interaction.guild_id,)) as cursor:
-                    rows = await cursor.fetchall()
+                    rows = cursor.fetchall()
 
                     pool = [r[0] for r in rows]
 
                 async with db.execute("SELECT user_id FROM giveaway_winners WHERE giveaway_id = ?",
                                       (giveaway_id,)) as cursor:
-                    prev_rows = await cursor.fetchall()
+                    prev_rows = cursor.fetchall()
                     if not prev_rows:
                         return await interaction.followup.send_response("This giveaway hasn't ended yet!",
                                                                         ephemeral=True)
@@ -2405,7 +2405,7 @@ class Giveaways(commands.Cog):
             async with db.execute(
                     "SELECT prize, ended, end_time, giveaway_id FROM giveaways WHERE guild_id = ? ORDER BY giveaway_id ASC",
                     (interaction.guild.id,)) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
 
         if not rows:
             return await interaction.edit_original_response("No giveaways found for this server.")
@@ -2571,7 +2571,7 @@ class Giveaways(commands.Cog):
                 "SELECT giveaway_id, channel_id FROM giveaways WHERE guild_id = ? AND ended = 0",
                 (guild.id,),
             ) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
         for giveaway_id, channel_id in rows:
             channel = guild.get_channel(channel_id)
             if channel is None:

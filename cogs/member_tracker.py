@@ -431,7 +431,7 @@ class MemberCountTracker(commands.Cog):
         self.tracker_cache.clear()
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM member_tracker WHERE is_active = 1") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 if rows:
                     columns = [column[0] for column in cursor.description]
                     for row in rows:

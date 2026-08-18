@@ -852,7 +852,7 @@ class RepeatingMessages(commands.Cog):
         self.message_cache.clear()
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM scheduled_messages") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 columns = [column[0] for column in cursor.description]
                 for row in rows:
                     data = dict(zip(columns, row))

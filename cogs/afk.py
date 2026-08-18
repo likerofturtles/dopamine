@@ -277,7 +277,7 @@ class AFK(commands.Cog):
                     FROM afk_users
                     """
             ) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 for row in rows:
                     (
                         user_id,
@@ -315,7 +315,7 @@ class AFK(commands.Cog):
                     ORDER BY timestamp ASC
                     """
             ) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 for row in rows:
                     (
                         mp_id,
@@ -340,7 +340,7 @@ class AFK(commands.Cog):
                     self.missed_pings_cache.setdefault(user_id, []).append(entry)
 
             async with db.execute("SELECT afk_user_id, observer_id FROM return_notifications") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 for afk_uid, obs_id in rows:
                     self.notification_cache.setdefault(afk_uid, set()).add(obs_id)
 

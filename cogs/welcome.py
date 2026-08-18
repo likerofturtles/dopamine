@@ -388,7 +388,7 @@ class WelcomeDashboardView(PrivateLayoutView):
             columns = ", ".join(f"{k} = ?" for k in kwargs.keys())
             values = list(kwargs.values())
             cursor = await db.execute("SELECT 1 FROM welcome_settings WHERE guild_id = ?", (self.guild_id,))
-            if not await cursor.fetchone():
+            if not cursor.fetchone():
                 await db.execute("INSERT INTO welcome_settings (guild_id) VALUES (?)", (self.guild_id,))
 
             await db.execute(f"UPDATE welcome_settings SET {columns} WHERE guild_id = ?", (*values, self.guild_id))
@@ -614,7 +614,7 @@ class Welcome(commands.Cog):
         async with self.acquire_db() as db:
             async with db.execute(
                     "SELECT guild_id, image_url FROM welcome_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
 
             if not rows:
                 return
@@ -644,7 +644,7 @@ class Welcome(commands.Cog):
         self.welcome_cache.clear()
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM welcome_settings") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 columns = [column[0] for column in cursor.description]
                 for row in rows:
                     data = dict(zip(columns, row))

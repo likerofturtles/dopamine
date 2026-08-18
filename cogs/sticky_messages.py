@@ -10,7 +10,6 @@ from beacon import beacon_commands
 from discord.ext import commands, tasks
 
 from cogs.embed import UseEmbedPage
-from config import STICKYDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
@@ -938,7 +937,7 @@ class StickyMessages(commands.Cog):
     async def populate_caches(self):
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM sticky_panels") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 cols = [c[0] for c in cursor.description]
                 for r in rows:
                     d = dict(zip(cols, r))

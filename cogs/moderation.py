@@ -1956,7 +1956,7 @@ class Moderation(commands.Cog):
                 "SELECT COALESCE(MAX(case_number), 0) + 1 FROM infractions WHERE guild_id = ?",
                 (guild_id,)
         ) as cursor:
-            row = await cursor.fetchone()
+            row = cursor.fetchone()
             return row[0]
 
     async def record_infraction(
@@ -2007,7 +2007,7 @@ class Moderation(commands.Cog):
                        WHERE guild_id = ? AND case_number = ?''',
                     (guild_id, case_number)
             ) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 return self._row_to_infraction(row) if row else None
 
     async def get_guild_active_users(self, guild_id: int) -> List[dict]:
@@ -2097,7 +2097,7 @@ class Moderation(commands.Cog):
                     "SELECT MAX(created_at) FROM infractions WHERE guild_id = ? AND user_id = ?",
                     (guild_id, user_id)
             ) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 last_ts = row[0] if row and row[0] else None
 
         key = f"{guild_id}:{user_id}"
@@ -2289,7 +2289,7 @@ class Moderation(commands.Cog):
 
         async with self.acquire_db() as db:
             async with db.execute("SELECT 1 FROM actions WHERE guild_id = ? LIMIT 1", (guild_id,)) as cursor:
-                if not await cursor.fetchone():
+                if not cursor.fetchone():
                     await db.executemany(
                         "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
                         [(guild_id, a, d, p) for a, d, p in default_actions]
@@ -2621,7 +2621,7 @@ class Moderation(commands.Cog):
                     "SELECT 1 FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
                     (guild_id, user_id)
             ) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 return row is not None
 
     mod_group = beacon_commands.Group(name="moderation", description="Moderation system settings", permissions_preset="moderator")
@@ -2715,7 +2715,7 @@ class Moderation(commands.Cog):
             async with db.execute(
                     "SELECT id FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
                     (interaction.guild.id, member.id)) as cursor:
-                pending_entry = await cursor.fetchone()
+                pending_entry = cursor.fetchone()
 
         if pending_entry:
             pending_id = pending_entry[0]
@@ -3042,7 +3042,7 @@ class Moderation(commands.Cog):
                     "SELECT id, user_id, moderator_id, reason, created_at, timeout_until FROM pending_punishments WHERE guild_id = ? ORDER BY created_at DESC",
                     (guild_id,)
             ) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 return [{"id": row[0], "user_id": row[1], "moderator_id": row[2], "reason": row[3], "created_at": row[4], "timeout_until": row[5]} for row in rows]
 
     async def add_pending_punishment(self, guild_id: int, user_id: int, moderator_id: int, reason: str, created_at: int, timeout_until: int) -> int:

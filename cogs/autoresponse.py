@@ -954,7 +954,7 @@ class Autoresponse(commands.Cog):
                 FROM autoresponses
                 """
             ) as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 columns = [col[0] for col in cursor.description]
 
         for row in rows:

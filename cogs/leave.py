@@ -234,7 +234,7 @@ class LeaveDashboardView(PrivateLayoutView):
             columns = ", ".join(f"{k} = ?" for k in kwargs.keys())
             values = list(kwargs.values())
             cursor = await db.execute("SELECT 1 FROM leave_settings WHERE guild_id = ?", (self.guild_id,))
-            if not await cursor.fetchone():
+            if not cursor.fetchone():
                 await db.execute("INSERT INTO leave_settings (guild_id) VALUES (?)", (self.guild_id,))
 
             await db.execute(f"UPDATE leave_settings SET {columns} WHERE guild_id = ?", (*values, self.guild_id))
@@ -604,7 +604,7 @@ class Leaves(commands.Cog):
         async with self.acquire_db() as db:
             async with db.execute(
                     "SELECT guild_id, image_url FROM leave_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
 
             if not rows:
                 return
@@ -634,7 +634,7 @@ class Leaves(commands.Cog):
         self.leave_cache.clear()
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM leave_settings") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 columns = [column[0] for column in cursor.description]
                 for row in rows:
                     data = dict(zip(columns, row))

@@ -194,14 +194,14 @@ class SkullboardCog(commands.Cog):
 
         async with self.acquire_db() as db:
             async with db.execute("SELECT * FROM guild_settings") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 cols = [c[0] for c in cursor.description]
                 for row in rows:
                     data = dict(zip(cols, row))
                     self.settings_cache[data["guild_id"]] = data
 
             async with db.execute("SELECT guild_id, source_message_id, skullboard_message_id FROM skull_posts") as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 for gid, src_id, sb_id in rows:
                     if gid not in self.skull_posts_cache:
                         self.skull_posts_cache[gid] = {}
@@ -220,7 +220,7 @@ class SkullboardCog(commands.Cog):
             await db.commit()
 
             async with db.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)) as cursor:
-                row = await cursor.fetchone()
+                row = cursor.fetchone()
                 cols = [c[0] for c in cursor.description]
                 data = dict(zip(cols, row))
 

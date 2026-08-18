@@ -162,13 +162,13 @@ class Nickname(commands.Cog):
     async def load_profanity_cache(self):
         async with self.acquire_db() as db:
             async with db.execute('SELECT word FROM profanity') as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 self.profanitycache = {row[0] for row in rows}
 
     async def load_serversettings_cache(self):
         async with self.acquire_db() as db:
             async with db.execute('SELECT guild_id, symbol_filter, profanity_filter, placeholder, last_scan FROM serversettings ORDER BY guild_id') as cursor:
-                rows = await cursor.fetchall()
+                rows = cursor.fetchall()
                 self.serversettingscache = {row[0]: {"symbol_filter": row[1], "profanity_filter": row[2], "placeholder": row[3], "last_scan": row[4]} for row in rows}
 
     async def load_verified_cache(self):
