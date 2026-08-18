@@ -175,7 +175,9 @@ class Nickname(commands.Cog):
         temp_cache = {}
         async with self.acquire_db() as db:
             async with db.execute('SELECT guild_id, user_id FROM verified') as cursor:
-                async for guild_id, user_id in cursor:
+                rows = cursor.fetchall()
+                for row in rows:
+                    guild_id, user_id = row[0], row[1]
                     if guild_id not in temp_cache:
                         temp_cache[guild_id] = set()
                     temp_cache[guild_id].add(user_id)
