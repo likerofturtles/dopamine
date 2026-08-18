@@ -153,7 +153,6 @@ class SkullboardCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.SDB_PATH = SKDB_PATH
         self.SKULL_EMOJI = "💀"
 
         self.settings_cache: Dict[int, dict] = {}
@@ -179,53 +178,40 @@ class SkullboardCog(commands.Cog):
         if self._skullboard_tasks:
             await asyncio.gather(*self._skullboard_tasks.values(), return_exceptions=True)
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
-    async def init_db(self):
-        await self.bot.db.wait_ready()
-
     async def populate_caches(self):
         """Load all data from DB into memory."""
         self.settings_cache.clear()
         self.skull_posts_cache.clear()
 
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM guild_settings") as cursor:
-                rows = cursor.fetchall()
-                cols = [c[0] for c in cursor.description]
-                for row in rows:
-                    data = dict(zip(cols, row))
-                    self.settings_cache[data["guild_id"]] = data
+        rows = await self.bot.db.execute("SELECT * FROM guild_settings")
+        for data in rows:
+            self.settings_cache[data["guild_id"]] = data
 
-            async with db.execute("SELECT guild_id, source_message_id, skullboard_message_id FROM skull_posts") as cursor:
-                rows = cursor.fetchall()
-                for gid, src_id, sb_id in rows:
-                    if gid not in self.skull_posts_cache:
-                        self.skull_posts_cache[gid] = {}
-                    self.skull_posts_cache[gid][src_id] = sb_id
+        rows = await self.bot.db.execute("SELECT guild_id, source_message_id, skullboard_message_id FROM skull_posts")
+        for row in rows:
+            gid = row["guild_id"]
+            src_id = row["source_message_id"]
+            sb_id = row["skullboard_message_id"]
+            if gid not in self.skull_posts_cache:
+                self.skull_posts_cache[gid] = {}
+            self.skull_posts_cache[gid][src_id] = sb_id
 
     async def get_guild_settings(self, guild_id: int) -> dict:
         """Fetch settings from cache, or create in DB and cache if missing."""
         if guild_id in self.settings_cache:
             return self.settings_cache[guild_id]
 
-        async with self.acquire_db() as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO guild_settings (guild_id, enabled) VALUES (?, 0)",
-                (guild_id,)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "INSERT OR IGNORE INTO guild_settings (guild_id, enabled) VALUES (?, 0)",
+            (guild_id,)
+        )
 
-            async with db.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)) as cursor:
-                row = cursor.fetchone()
-                cols = [c[0] for c in cursor.description]
-                data = dict(zip(cols, row))
-
-        self.settings_cache[guild_id] = data
-        return data
+        rows = await self.bot.db.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
+        if rows:
+            data = rows[0]
+            self.settings_cache[guild_id] = data
+            return data
+        return {}
 
     async def update_guild_setting(self, guild_id: int, **kwargs):
         """Update both DB and cache manually (Write-Through)."""
@@ -238,9 +224,7 @@ class SkullboardCog(commands.Cog):
         set_clause = ", ".join(f"{key} = ?" for key in kwargs.keys())
         values = list(kwargs.values()) + [guild_id]
 
-        async with self.acquire_db() as db:
-            await db.execute(f"UPDATE guild_settings SET {set_clause} WHERE guild_id = ?", values)
-            await db.commit()
+        await self.bot.db.execute_write(f"UPDATE guild_settings SET {set_clause} WHERE guild_id = ?", values)
 
     def get_skull_emoji(self, count: int) -> str:
         if count >= 15:
@@ -504,7 +488,7 @@ class SkullboardCog(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="skullboard")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             settings = await export_table(
                 db, "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
             posts = await export_table(
@@ -519,7 +503,7 @@ class SkullboardCog(commands.Cog):
         if feature_id and feature_id != "skullboard":
             return DataDeleteResult(feature_id="skullboard")
         rows_affected = 0
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             cur = await db.execute("DELETE FROM skull_posts WHERE guild_id = ?", (guild_id,))
             rows_affected += cur.rowcount
             cur = await db.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))
