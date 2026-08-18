@@ -350,8 +350,8 @@ class DailyCats(commands.Cog):
                 else:
                     the_string = "Unknown User"
 
-            courtesy_line = f"Courtesy: {the_string}"
-            content = f"Today's Cat Pic ({courtesy_line})"
+            f_string = f"-# Courtesy: {the_string}"
+            g_string = f"Today's Cat Pic\n{f_string}"
 
             async def send_to_channel(channel_id):
                 guild_id = None
@@ -382,7 +382,7 @@ class DailyCats(commands.Cog):
                 if channel_id in self.active_cat_channels and image_blob:
                     try:
                         file = discord.File(io.BytesIO(image_blob), filename="daily_cat.png")
-                        await ch.send(content=content, file=file)
+                        await ch.send(content=g_string, file=file)
                         await asyncio.sleep(0.25)
                     except Exception as e:
                         if is_access_error(e):
