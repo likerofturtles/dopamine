@@ -1,22 +1,21 @@
+import asyncio
+import random
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Set, Any
-import discord
-from discord import app_commands, Interaction
-from discord.ext import commands, tasks
-import random
-import asyncio
-import aiosqlite
 from datetime import datetime, timezone
-from discord.ui import TextDisplay
-from beacon import PrivateLayoutView, PrivateView, beacon_commands
+from typing import Optional, List, Dict, Set
 
-from config import GDB_PATH
+import aiosqlite
+import discord
+from beacon import PrivateLayoutView, PrivateView, beacon_commands
+from discord import app_commands
+from discord.ext import commands, tasks
+from natsort import natsorted, ns
+
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
 from utils.time import get_duration_to_seconds, get_now_plus_seconds_unix
-from natsort import natsorted, ns
 
 ADJECTIVES = ["alpha", "beta", "delta", "sonic", "prime", "global", "pivot", "solid", "static", "linear", "vital", "core", "urban", "nomad"]
 NOUNS = ["node", "link", "point", "base", "grid", "zone", "unit", "flux", "pillar", "vector", "path", "shift", "pulse", "forge"]
@@ -465,7 +464,7 @@ class GiveawayPreviewView(PrivateView):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
+        await interaction.response.edit_message(content=None, embed=discord.Embed(title="Giveaway Creation Cancelled."), view=None)
         self.stop()
 
 
@@ -1585,12 +1584,10 @@ class Giveaways(commands.Cog):
         self.bot = bot
         self.giveaway_cache: Dict[int, dict] = {}
         self.participant_cache: Dict[int, Set[int]] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.check_giveaways.start()
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         for giveaway_id in self.giveaway_cache:
             self.bot.add_view(GiveawayJoinView(self, giveaway_id))
@@ -1598,113 +1595,13 @@ class Giveaways(commands.Cog):
     async def cog_unload(self):
         self.check_giveaways.cancel()
 
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    GDB_PATH,
-                    timeout=5,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await self._migrate_winner_role_to_text(db)
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaways (
-                    guild_id INTEGER,
-                    giveaway_id INTEGER,
-                    channel_id INTEGER,
-                    message_id INTEGER,
-                    prize TEXT,
-                    winners_count INTEGER,
-                    end_time INTEGER,
-                    host_id INTEGER,
-                    required_roles TEXT,
-                    req_behaviour INTEGER,
-                    blacklisted_roles TEXT,
-                    extra_entry_roles TEXT,
-                    winner_role_id TEXT,
-                    image_url TEXT,
-                    thumbnail_url TEXT,
-                    color TEXT,
-                    ended INTEGER DEFAULT 0,
-                    PRIMARY KEY (guild_id, giveaway_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaway_participants (
-                    guild_id INTEGER,
-                    giveaway_id INTEGER,
-                    user_id INTEGER,
-                    PRIMARY KEY (guild_id, giveaway_id, user_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS giveaway_winners (
-                    giveaway_id INTEGER,
-                    user_id INTEGER,
-                    PRIMARY KEY (giveaway_id, user_id)
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS templates (
-                    template_id TEXT PRIMARY KEY,
-                    creator_id INTEGER,
-                    creation_guild_id INTEGER,
-                    prize TEXT,
-                    winners INTEGER,
-                    duration TEXT,
-                    channel_id INTEGER,
-                    host_id INTEGER,
-                    required_roles TEXT,
-                    req_behaviour INTEGER,
-                    blacklisted_roles TEXT,
-                    extra_entries TEXT,
-                    winner_role_id TEXT,
-                    image TEXT,
-                    thumbnail TEXT,
-                    color TEXT,
-                    usage_count INTEGER DEFAULT 0,
-                    is_published INTEGER DEFAULT 0,
-                    review_status TEXT DEFAULT 'none'
-                )
-            ''')
-
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS review_config (
-                    guild_id INTEGER PRIMARY KEY,
-                    channel_id INTEGER
-                )
-            ''')
-
-            await db.commit()
-
-            await self._run_migrations(db)
+        await self.bot.db.wait_ready()
 
     async def _run_migrations(self, db: aiosqlite.Connection):
         """
@@ -2393,10 +2290,18 @@ class Giveaways(commands.Cog):
             if g[3] == 0:
                 return await interaction.response.send_message(
                     "This giveaway hasn't ended yet! You can't reroll active giveaways.")
-
+        line2 = None
+        if preserve_winners and g[1]:
+            line2 = "Preserve old winners and their winner roles"
+        elif preserve_winners and not g[1]:
+            line2 = "Preserve old winners"
+        elif not preserve_winners and g[1]:
+            line2 = f"Override **{winners}** old winners and remove their winner roles"
+        elif not preserve_winners and not g[1]:
+            line2 = f"Override **{winners}** old winners"
         body_content = (f"Are you sure you want to:\n"
                         f"* Re-roll this giveaway to pick **{winners}** new winners\n"
-                        f"* {'Preserve old winners and their roles' if preserve_winners else f'override **{winners}** old winners and remove their winner role'}\n"
+                        f"* {line2}\n"
                         f"{f'* Give **{winners}** the winner role' if g[1] else ''}")
 
         view = ConfirmationViewOld("Pending Confirmation", body_content, interaction.user)
@@ -2437,10 +2342,8 @@ class Giveaways(commands.Cog):
                     if g[1]:
                         role = interaction.guild.get_role(g[1])
                         if not role:
-                            role = interaction.guild.fetch_role(g[1])
-                        if not role:
-                            await interaction.followup_send(
-                                "I can't find the role to remove from the previous winners!", ephemeral=True)
+                            role = await interaction.guild.fetch_role(g[1])
+
                         if role:
                             for chunk in chunk_list(self, prev_winners, 5):
                                 for old_uid in chunk:
@@ -2452,8 +2355,8 @@ class Giveaways(commands.Cog):
                                         except discord.HTTPException:
                                             pass
                                 await asyncio.sleep(1.5)
-                    await db.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ? AND user_id = ?",
-                                     (giveaway_id, old_uid))
+
+                    await db.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ?", (giveaway_id,))
 
                 for new_uid in new_picks:
                     await db.execute("INSERT INTO giveaway_winners (giveaway_id, user_id) VALUES (?, ?)",
@@ -2489,7 +2392,7 @@ class Giveaways(commands.Cog):
                 mention_str = ", ".join([f"<@{w}>" for w in new_picks])
                 mode_text = "added to the pool of winners" if preserve_winners else "selected as the new winners"
                 await channel.send(
-                    f"🎉 Congratulations to: {mention_str} for being {mode_text} for **{g[0]}**!\n\nThis giveaway has been re-rolled by {interaction.user.mention}")
+                    f"🎉 Congratulations to: {mention_str} for being {mode_text} for **{g[0]}**!\nThis giveaway has been re-rolled by {interaction.user.mention}.")
 
     @giveaway_reroll.autocomplete("giveaway_id")
     async def reroll_autocomplete(self, interaction: discord.Interaction, current: str):

@@ -1,19 +1,15 @@
-import asyncio
+import datetime
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Set, Any, AsyncGenerator
+from typing import Dict, List, Optional, Set
 
-import aiosqlite
 import discord
-from aiosqlite import Connection
+from beacon import PrivateView
 from discord import app_commands
 from discord.ext import commands
 
-from config import AFKDB_PATH
-from beacon import ViewPaginator, PrivateView
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
-import datetime
 
 AFK_BUFFER_SECONDS = 30
 AFK_MAX_SECONDS = 72 * 60 * 60
@@ -119,16 +115,16 @@ class MissedPingsPaginator(discord.ui.View):
             if len(content) > 1000:
                 content = content[:1000] + "..."
 
-            embed.description = f"{jump_link}\n\n{content}"
+            embed.description = f"{jump_link}\n{content}"
             embed.set_footer(text=f"in {guild.name if guild else 'Unknown Server'}")
-            embed.timestamp = datetime.datetime.fromtimestamp(entry.timestamp, tz=datetime.timezone.utc).replace(tzinfo=None)
+            embed.timestamp = datetime.datetime.fromtimestamp(entry.timestamp, tz=datetime.timezone.utc)
             embeds.append(embed)
 
         return embeds
 
     async def send_initial(self) -> bool:
         embeds = await self.get_page_embeds()
-        content = f"# {len(self.entries)} Missed Pings"
+        content = f"## {len(self.entries)} Missed Pings"
         try:
             self.message = await self.interaction.user.send(content=content, embeds=embeds, view=self)
             return True
@@ -138,7 +134,7 @@ class MissedPingsPaginator(discord.ui.View):
     async def update_message(self, interaction: discord.Interaction):
         self.update_buttons()
         embeds = await self.get_page_embeds()
-        content = f"# {len(self.entries)} Missed Pings"
+        content = f"## {len(self.entries)} Missed Pings"
         await interaction.response.edit_message(content=content, embeds=embeds, view=self)
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.primary)
@@ -203,7 +199,7 @@ class ViewNotifyOnReturn(discord.ui.View):
     """View attached to the AFK notice allowing users to be notified when the AFK target returns."""
 
     def __init__(self, cog: "AFK", afk_user_id: int):
-        super().__init__(timeout=259200)
+        super().__init__(timeout=60)
         self.cog = cog
         self.afk_user_id = afk_user_id
         self.message = None
@@ -212,22 +208,32 @@ class ViewNotifyOnReturn(discord.ui.View):
                        custom_id="afk_notify_on_return")
     async def notify_me(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id == self.afk_user_id:
-            return await interaction.response.send_message("Don't you think this is a bit too narcissistic? You cannot register to be notified about your own grand return.",
+            return await interaction.response.send_message("Don't you think this is a bit too narcissistic? You can't register to be notified about your own return.",
                                                            ephemeral=True)
 
         if self.afk_user_id not in self.cog.afk_users:
-            return await interaction.response.send_message("This user is no longer AFK.", ephemeral=True)
+            await interaction.response.edit_message(view=None)
+            return await interaction.followup.send(content="This user is no longer AFK.", ephemeral=True)
 
         success = await self.cog.add_notification_request(self.afk_user_id, interaction.user.id)
+        user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
         if success:
-            await interaction.response.send_message("Got it! You will now be DMed upon their grand return.", ephemeral=True)
+            await interaction.response.send_message(f"Got it! You will now be notified when {user.mention} returns.", ephemeral=True)
         else:
             success = await self.cog.remove_notification_request(self.afk_user_id, interaction.user.id)
             if success:
-                await interaction.response.send_message("You will no longer be notified upon their grand return. Sad.",
+                await interaction.response.send_message(f"You will no longer be notified when {user.mention} returns. Sad.",
                                                         ephemeral=True)
             else:
                 await interaction.response.send_message("sum ting wong", ephemeral=True)
+
+    @discord.ui.button(label="Leave a message", style=discord.ButtonStyle.secondary)
+    async def leave_a_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id == self.afk_user_id:
+            return await interaction.response.send_message("Why would you wanna leave a message for yourself? 🤨 This isn't a notes app... I mean I do support notes, use </note create:1522184511675301990> to create one! But if you really wanna know how to leave a message, just mention the AFK user and I will hand all the missed pings to them when they return.", ephemeral=True)
+        user = self.cog.bot.get_user(self.afk_user_id) or await self.cog.bot.fetch_user(self.afk_user_id)
+        await interaction.response.send_message(f"To leave a message, you can simply mention {user.mention} like normal and they will be notified about it by me when they return!", ephemeral=True)
+
     async def on_timeout(self) -> None:
         if self.message:
             await self.message.edit(view=None)
@@ -237,108 +243,24 @@ class ViewNotifyOnReturn(discord.ui.View):
 class AFK(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.afk_users: Dict[int, AFKState] = {}
         self.missed_pings_cache: Dict[int, List[MissedPing]] = {}
         self.notification_cache: Dict[int, Set[int]] = {}
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
 
     async def cog_unload(self):
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-            self.db_pool = None
-
-    async def create_pooled_connection(self, path: str) -> Connection | None:
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                conn = await aiosqlite.connect(
-                    path,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA foreign_keys=ON")
-                await conn.commit()
-                return conn
-            except Exception:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.1 * (2 ** attempt))
-                    continue
-                raise
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await self.create_pooled_connection(AFKDB_PATH)
-                if not conn is None:
-                    await self.db_pool.put(conn)
+        pass
 
     @asynccontextmanager
-    async def acquire_db(self) -> AsyncGenerator[Connection, Any]:
-        assert self.db_pool is not None
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+    async def acquire_db(self):
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS afk_users (
-                    user_id INTEGER PRIMARY KEY,
-                    status TEXT,
-                    is_global INTEGER DEFAULT 1,
-                    role_id INTEGER,
-                    save_missed_pings INTEGER DEFAULT 1,
-                    started_at INTEGER NOT NULL,
-                    buffer_until INTEGER NOT NULL,
-                    origin_guild_id INTEGER,
-                    old_nick TEXT
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS missed_pings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    author_id INTEGER NOT NULL,
-                    guild_id INTEGER,
-                    channel_id INTEGER,
-                    message_id INTEGER,
-                    content TEXT,
-                    timestamp INTEGER NOT NULL
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS return_notifications (
-                    afk_user_id INTEGER NOT NULL,
-                    observer_id INTEGER NOT NULL,
-                    PRIMARY KEY (afk_user_id, observer_id)
-                )
-                """
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_missed_pings_user_id ON missed_pings (user_id, timestamp)"
-            )
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_caches(self):
         self.afk_users.clear()
@@ -684,7 +606,6 @@ class AFK(commands.Cog):
                                        string_for_after_missed_pings_clear) if missed and state.save_missed_pings else None
 
                 try:
-
                     if view:
                         msg = await message.reply(content, view=view, mention_author=False)
                         view.message = msg
@@ -731,38 +652,6 @@ class AFK(commands.Cog):
                 notify_view.message = msg
             except (discord.Forbidden, discord.HTTPException):
                 pass
-
-        if message.role_mentions:
-            for role in message.role_mentions:
-                for uid, state in list(self.afk_users.items()):
-                    if await self._maybe_cleanup_if_expired(uid, state):
-                        continue
-
-                    if not self._is_afk_active_in_context(state, message.guild):
-                        continue
-
-                    member = message.guild.get_member(uid) or await message.guild.fetch_member(uid)
-                    if not member or role not in member.roles:
-                        continue
-
-                    await self._store_missed_ping(
-                        user_id=uid,
-                        author_id=message.author.id,
-                        guild_id=message.guild.id,
-                        channel_id=message.channel.id,
-                        message_id=message.id,
-                        content=message.content or "*No message content*",
-                        timestamp=int(message.created_at.timestamp()),
-                    )
-
-                    if len(role.members) <= 3:
-                        notice = self._format_afk_notice(member, state)
-                        try:
-                            notify_view = ViewNotifyOnReturn(self, member.id)
-                            msg = await message.channel.send(notice, view=notify_view)
-                            notify_view.message = msg
-                        except (discord.Forbidden, discord.HTTPException):
-                            pass
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):

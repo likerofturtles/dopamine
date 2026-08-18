@@ -1,14 +1,19 @@
+import asyncio
+import datetime
 import importlib
-import discord
-from discord import app_commands
-from discord.ext import commands, tasks
-from beacon import ViewPaginator
-import VERSION
-import psutil
 import os
 from collections import deque
+
+import discord
+import psutil
+from beacon import ViewPaginator
 from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
+
+import VERSION
 from utils.log import LoggingManager
+
 
 class Dblc(commands.Cog):
     def __init__(self, bot):
@@ -17,7 +22,7 @@ class Dblc(commands.Cog):
         self.bot_version = VERSION.bot_version
         self.latency_cache = deque(maxlen=1440)
         self.temp_samples = []
-        self.manager = LoggingManager()
+        self.manager = LoggingManager(bot.db)
         self.process = psutil.Process(os.getpid())
         self.process.cpu_percent(interval=None)
         self.current_cpu = 0.0
@@ -35,31 +40,37 @@ class Dblc(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @beacon_commands.command(name="purge", description="Delete recent messages.", permissions_preset="support")
-    @app_commands.describe(number="Number of messages to delete (max 100)", reason="An optional reason for this message purge")
+    @app_commands.describe(number="Number of messages to delete (max 100)",
+                           reason="An optional reason for this message purge")
     async def purge(self, interaction: discord.Interaction, number: int, reason: str | None = None):
         number = max(1, min(number, 100))
 
         await interaction.response.defer(ephemeral=True)
 
         try:
+            raw_messages = [msg async for msg in interaction.channel.history(limit=number)]
 
-            messages = [msg async for msg in interaction.channel.history(limit=number)]
+            if not raw_messages:
+                return await interaction.edit_original_response(content="No messages found to delete.")
 
-            if not messages:
-                return await interaction.edit_original_response("No messages found to delete.", ephemeral=True)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            fourteen_days_ago = now - datetime.timedelta(days=14)
 
-            await interaction.channel.delete_messages(messages)
-            deleted_count = len(messages)
+            valid_messages = [msg for msg in raw_messages if msg.created_at > fourteen_days_ago]
+
+            if not valid_messages:
+                return await interaction.edit_original_response(
+                    content="Cannot delete messages older than 14 days."
+                )
+
+            await interaction.channel.delete_messages(valid_messages)
+            deleted_count = len(valid_messages)
 
         except discord.Forbidden:
-            return await interaction.edit_original_response("I don't have permission to delete messages here.", ephemeral=True)
+            return await interaction.edit_original_response(content="I don't have permission to delete messages here.")
         except discord.HTTPException as e:
-            if e.code == 50034:
-                return await interaction.edit_original_response(
-                    "Cannot delete messages older than 14 days using bulk delete.",
-                    ephemeral=True
-                )
-            return await interaction.edit_original_response(f"An error occurred: {e}", ephemeral=True)
+            return await interaction.edit_original_response(content=f"An error occurred: {e}")
+
         channel_id = await self.manager.log_get(interaction.guild.id)
         log_ch = None
         if channel_id:
@@ -67,13 +78,74 @@ class Dblc(commands.Cog):
         if log_ch:
             log_embed = discord.Embed(
                 title="Messages Purged",
-                description=f"* **Amount Purged:** {deleted_count}** Message(s)\n* **Channel:** {interaction.channel.mention}\n* **Reason:** {reason if reason else 'No reason provided.'}",
+                description=f"* **Amount Purged:** {deleted_count} Message(s)\n* **Channel:** {interaction.channel.mention}\n* **Reason:** {reason if reason else 'No reason provided.'}",
                 color=discord.Color.red()
             )
             log_embed.set_footer(text=f"By {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
             await log_ch.send(embed=log_embed)
 
         await interaction.edit_original_response(content=f"Successfully purged **{deleted_count}** message(s).")
+
+    @beacon_commands.command(
+        name="dp",
+        description=".",
+        permissions_preset="bot_owner"
+    )
+    @app_commands.describe(
+        number="Number of messages to purge (max 6769)"
+    )
+    async def deep_purge(self, interaction: discord.Interaction, number: int):
+        number = max(1, min(number, 6769))
+        delay = 0.35
+
+        await interaction.response.defer(ephemeral=True)
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        fourteen_days_ago = now - datetime.timedelta(days=14)
+
+        raw_messages = [msg async for msg in interaction.channel.history(limit=number)]
+
+        if not raw_messages:
+            return await interaction.edit_original_response(content="No messages found to purge.")
+
+        old_messages = [msg for msg in raw_messages if msg.created_at <= fourteen_days_ago]
+
+        if not old_messages:
+            return await interaction.edit_original_response(
+                content="No messages older than 14 days were found in the requested range."
+            )
+
+        deleted_count = 0
+        failed_count = 0
+
+        await interaction.edit_original_response(
+            content=f"Found **{len(old_messages)}** message(s) older than 14 days. Beginning purge..."
+        )
+
+        for msg in old_messages:
+            try:
+                await msg.delete()
+                deleted_count += 1
+            except discord.Forbidden:
+                failed_count += 1
+            except discord.NotFound:
+                continue
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', 2.0)
+                    await asyncio.sleep(retry_after)
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                    except Exception:
+                        failed_count += 1
+                else:
+                    failed_count += 1
+
+            await asyncio.sleep(max(0.1, delay))
+
+        status_msg = f"Completed purge!\n* **Successfully deleted:** `{deleted_count}`\n* **Failed:** `{failed_count}`"
+        await interaction.edit_original_response(content=status_msg)
 
     @beacon_commands.command(name="ban", description="Fake-ban someone (cosmetic).")
     @app_commands.describe(member="Who to fake-ban", duration="How long (text)", reason="Optional reason")
@@ -222,6 +294,7 @@ class Dblc(commands.Cog):
         ]
 
         view = ViewPaginator(
+            user=interaction.user,
             title=f"Server List ({len(guilds)} total)",
             data=data,
             per_page=10,

@@ -1,79 +1,30 @@
-import discord
-import aiosqlite
 import asyncio
-import logging
-from discord.ext import commands
-from discord import app_commands
-from typing import List, Set
-
-from config import APDB_PATH
-
-from beacon import beacon_commands
 import collections
+from typing import Set
 
-class ConnectionPool:
-
-    def __init__(self, db_path: str, max_connections: int = 5):
-        self.db_path = db_path
-        self.max_connections = max_connections
-        self.queue = asyncio.Queue(maxsize=max_connections)
-        self.connections = []
-
-    async def init_pool(self):
-        for _ in range(self.max_connections):
-            conn = await aiosqlite.connect(self.db_path)
-            await conn.execute("PRAGMA journal_mode=WAL;")
-            await conn.execute("PRAGMA synchronous=NORMAL;")
-            await conn.execute("PRAGMA busy_timeout=5000;")
-            await conn.commit()
-
-            self.connections.append(conn)
-            await self.queue.put(conn)
-
-    async def acquire(self) -> aiosqlite.Connection:
-        return await self.queue.get()
-
-    async def release(self, conn: aiosqlite.Connection):
-        await self.queue.put(conn)
-
-    async def close(self):
-        for conn in self.connections:
-            await conn.close()
+import discord
+from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
 
 
 class AutoPublish(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.pool = ConnectionPool(APDB_PATH, max_connections=5)
         self.cache: Set[int] = set()
         self.publish_deque = collections.deque(maxlen=5)
         self.new_item_event = asyncio.Event()
         self.queue_task = None
 
     async def cog_load(self):
-        await self.pool.init_pool()
-
-        conn = await self.pool.acquire()
-        try:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS autopublish_channels (
-                    channel_id INTEGER PRIMARY KEY,
-                    guild_id INTEGER
-                )
-            """)
-            await conn.commit()
-
-            async with conn.execute("SELECT channel_id FROM autopublish_channels") as cursor:
-                rows = await cursor.fetchall()
-                self.cache = {row[0] for row in rows}
-        finally:
-            await self.pool.release(conn)
+        await self.bot.db.wait_ready()
+        rows = await self.bot.db.execute("SELECT channel_id FROM autopublish_channels")
+        self.cache = {row["channel_id"] for row in rows}
         self.queue_task = asyncio.create_task(self.publish_worker())
 
     async def cog_unload(self):
         if self.queue_task:
             self.queue_task.cancel()
-        await self.pool.close()
 
     async def publish_worker(self):
         DELAY_BETWEEN_PUBLISHES = 365
@@ -128,22 +79,16 @@ class AutoPublish(commands.Cog):
             return await interaction.response.send_message(f"Auto-publish is already enabled for {channel.mention}!",
                                                            ephemeral=True)
 
-        conn = await self.pool.acquire()
         try:
-            await conn.execute(
+            await self.bot.db.execute(
                 "INSERT OR IGNORE INTO autopublish_channels (channel_id, guild_id) VALUES (?, ?)",
                 (channel.id, interaction.guild.id)
             )
-            await conn.commit()
-
             self.cache.add(channel.id)
-
             await interaction.response.send_message(f"Auto-publish enabled for {channel.mention}.", ephemeral=True)
         except Exception as e:
             print(f"DB Error on enable: {e}")
             await interaction.response.send_message("A database error occurred.", ephemeral=True)
-        finally:
-            await self.pool.release(conn)
 
     @autopublish_group.command(name="disable", description="Disable auto-publishing for a channel.")
     @app_commands.describe(channel="The announcement channel to disable auto-publish for.")
@@ -153,19 +98,13 @@ class AutoPublish(commands.Cog):
             return await interaction.response.send_message(f"Auto-publish is not enabled for {channel.mention}!",
                                                            ephemeral=True)
 
-        conn = await self.pool.acquire()
         try:
-            await conn.execute("DELETE FROM autopublish_channels WHERE channel_id = ?", (channel.id,))
-            await conn.commit()
-
+            await self.bot.db.execute("DELETE FROM autopublish_channels WHERE channel_id = ?", (channel.id,))
             self.cache.discard(channel.id)
-
             await interaction.response.send_message(f"Auto-publish disabled for {channel.mention}.", ephemeral=True)
         except Exception as e:
             print(f"DB Error on disable: {e}")
             await interaction.response.send_message("A database error occurred.", ephemeral=True)
-        finally:
-            await self.pool.release(conn)
 
 
     def data_features(self) -> list:
@@ -179,15 +118,10 @@ class AutoPublish(commands.Cog):
     async def data_export_guild(self, guild_id: int):
         from utils.data_protocol import DataExportChunk
         chunk = DataExportChunk(feature_id="autopublish")
-        conn = await self.pool.acquire()
-        try:
-            async with conn.execute(
-                "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
-            ) as cur:
-                rows = await cur.fetchall()
-            chunk.guild_data[guild_id] = {"channels": [r[0] for r in rows]}
-        finally:
-            await self.pool.release(conn)
+        rows = await self.bot.db.execute(
+            "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
+        )
+        chunk.guild_data[guild_id] = {"channels": [r["channel_id"] for r in rows]}
         return chunk
 
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None):
@@ -196,38 +130,28 @@ class AutoPublish(commands.Cog):
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None):
         from utils.data_protocol import DataDeleteResult
-        conn = await self.pool.acquire()
-        try:
-            async with conn.execute(
-                "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
-            ) as cur:
-                cids = [r[0] for r in await cur.fetchall()]
-            cur = await conn.execute("DELETE FROM autopublish_channels WHERE guild_id = ?", (guild_id,))
-            await conn.commit()
-        finally:
-            await self.pool.release(conn)
+        rows = await self.bot.db.execute(
+            "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
+        )
+        cids = [r["channel_id"] for r in rows]
+        await self.bot.db.execute("DELETE FROM autopublish_channels WHERE guild_id = ?", (guild_id,))
         for cid in cids:
             self.cache.discard(cid)
-        return DataDeleteResult(feature_id="autopublish", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="autopublish", deleted=True, rows_affected=len(cids))
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult
         result = DataMonitorResult(feature_id="autopublish")
-        conn = await self.pool.acquire()
-        try:
-            async with conn.execute(
-                "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild.id,)
-            ) as cur:
-                cids = [r[0] for r in await cur.fetchall()]
-            for cid in cids:
-                ch = guild.get_channel(cid)
-                if not ch or not ch.permissions_for(guild.me).send_messages:
-                    await conn.execute("DELETE FROM autopublish_channels WHERE channel_id = ?", (cid,))
-                    self.cache.discard(cid)
-                    result.actions.append(f"removed_channel_{cid}")
-            await conn.commit()
-        finally:
-            await self.pool.release(conn)
+        rows = await self.bot.db.execute(
+            "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild.id,)
+        )
+        cids = [r["channel_id"] for r in rows]
+        for cid in cids:
+            ch = guild.get_channel(cid)
+            if not ch or not ch.permissions_for(guild.me).send_messages:
+                await self.bot.db.execute("DELETE FROM autopublish_channels WHERE channel_id = ?", (cid,))
+                self.cache.discard(cid)
+                result.actions.append(f"removed_channel_{cid}")
         return result
 
 

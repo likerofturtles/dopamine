@@ -1,17 +1,14 @@
+import asyncio
+from datetime import datetime, time
+from typing import List, Dict, Tuple
+
 import discord
+import pytz
+from beacon import PrivateLayoutView, beacon_commands, preconditions
+from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands, tasks
-from discord import app_commands
-import aiosqlite
-import asyncio
-from typing import Optional, List, Dict, Tuple
-from contextlib import asynccontextmanager
-from datetime import datetime, time, timedelta
-import pytz
-import re
-from beacon import PrivateLayoutView, beacon_commands, preconditions
 
-from config import SSDB_PATH
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 
@@ -90,13 +87,11 @@ class DestructiveConfirmationView(PrivateLayoutView):
 class ScheduledSlowmode(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self._schedule_cache: Dict[int, List[Tuple[int, int, int]]] = {}
         self.lock = asyncio.Lock()
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self.slowmode_monitor.is_running():
             self.slowmode_monitor.start()
@@ -105,67 +100,16 @@ class ScheduledSlowmode(commands.Cog):
         if self.slowmode_monitor.is_running():
             self.slowmode_monitor.cancel()
 
-        if self.db_pool:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing pool connection: {e}")
-
-            self.db_pool = None
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    SSDB_PATH,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
-
-    @asynccontextmanager
-    async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
-
-    async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute('''
-                             CREATE TABLE IF NOT EXISTS slowmode_schedules
-                             (
-                                 id INTEGER PRIMARY KEY,
-                                 guild_id INTEGER,
-                                 channel_id INTEGER,
-                                 delay_seconds INTEGER,
-                                 start_min_utc INTEGER,
-                                 end_min_utc INTEGER
-                             )
-                             ''')
-            await db.execute('CREATE INDEX IF NOT EXISTS idx_slow_channel ON slowmode_schedules(channel_id)')
-            await db.commit()
-
     async def populate_caches(self):
         self._schedule_cache.clear()
-        async with self.acquire_db() as db:
-            async with db.execute(
-                    'SELECT channel_id, start_min_utc, end_min_utc, delay_seconds FROM slowmode_schedules') as cursor:
-                rows = await cursor.fetchall()
-                for cid, start, end, delay in rows:
-                    if cid not in self._schedule_cache:
-                        self._schedule_cache[cid] = []
-                    self._schedule_cache[cid].append((start, end, delay))
+        rows = await self.bot.db.execute(
+            'SELECT channel_id, start_min_utc, end_min_utc, delay_seconds FROM slowmode_schedules')
+        for row in rows:
+            cid = row["channel_id"]
+            if cid not in self._schedule_cache:
+                self._schedule_cache[cid] = []
+            self._schedule_cache[cid].append(
+                (row["start_min_utc"], row["end_min_utc"], row["delay_seconds"]))
 
 
     async def check_vote_access(self, user_id: int) -> bool:
@@ -173,7 +117,7 @@ class ScheduledSlowmode(commands.Cog):
         if not voter_cog: return True
         return await voter_cog.check_vote_access(user_id)
 
-    def parse_time_str(self, time_str: str) -> Optional[time]:
+    def parse_time_str(self, time_str: str) -> time | None:
         time_str = time_str.strip().upper()
         formats = ["%H:%M", "%I:%M %p", "%I:%M%p"]
         for fmt in formats:
@@ -301,12 +245,10 @@ class ScheduledSlowmode(commands.Cog):
                                                                ephemeral=True)
 
         async with self.lock:
-            async with self.acquire_db() as db:
-                await db.execute('''
-                                 INSERT INTO slowmode_schedules (guild_id, channel_id, delay_seconds, start_min_utc, end_min_utc)
-                                 VALUES (?, ?, ?, ?, ?)
-                                 ''', (interaction.guild.id, channel.id, interval, utc_start, utc_end))
-                await db.commit()
+            await self.bot.db.execute('''
+                INSERT INTO slowmode_schedules (guild_id, channel_id, delay_seconds, start_min_utc, end_min_utc)
+                VALUES (?, ?, ?, ?, ?)
+                ''', (interaction.guild.id, channel.id, interval, utc_start, utc_end))
 
             if channel.id not in self._schedule_cache:
                 self._schedule_cache[channel.id] = []
@@ -338,9 +280,8 @@ class ScheduledSlowmode(commands.Cog):
         await view.wait()
         if view.value is True:
             async with self.lock:
-                async with self.acquire_db() as db:
-                    await db.execute("DELETE FROM slowmode_schedules WHERE channel_id = ?", (channel.id,))
-                    await db.commit()
+                await self.bot.db.execute_write(
+                    "DELETE FROM slowmode_schedules WHERE channel_id = ?", (channel.id,))
 
                 if channel.id in self._schedule_cache:
                     del self._schedule_cache[channel.id]
@@ -352,6 +293,7 @@ class ScheduledSlowmode(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def slowmode_monitor(self):
+        await self.bot.db.wait_ready()
         now_utc = datetime.now(pytz.UTC)
         current_minutes = now_utc.hour * 60 + now_utc.minute
 
@@ -402,9 +344,8 @@ class ScheduledSlowmode(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="slowmode")
-        async with self.acquire_db() as db:
-            rows = await export_table(
-                db, "SELECT * FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
+        rows = await export_table(
+            self.bot.db, "SELECT * FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"slowmode_schedules": rows}
         return chunk
 
@@ -414,17 +355,14 @@ class ScheduledSlowmode(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "slowmode":
             return DataDeleteResult(feature_id="slowmode")
-        channel_ids = []
-        async with self.acquire_db() as db:
-            async with db.execute(
-                "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild_id,),
-            ) as cursor:
-                channel_ids = [row[0] async for row in cursor]
-            cur = await db.execute("DELETE FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        rows = await self.bot.db.execute(
+            "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
+        channel_ids = [row["channel_id"] for row in rows]
+        rows_affected = await self.bot.db.execute_write(
+            "DELETE FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
         for cid in channel_ids:
             self._schedule_cache.pop(cid, None)
-        return DataDeleteResult(feature_id="slowmode", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="slowmode", deleted=True, rows_affected=rows_affected)
 
     async def _channel_manageable(self, guild: discord.Guild, channel_id: int) -> bool:
         channel = guild.get_channel(channel_id)
@@ -440,20 +378,16 @@ class ScheduledSlowmode(commands.Cog):
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         result = DataMonitorResult(feature_id="slowmode")
-        async with self.acquire_db() as db:
-            async with db.execute(
-                "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild.id,),
-            ) as cursor:
-                channel_ids = [row[0] async for row in cursor]
+        rows = await self.bot.db.execute(
+            "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild.id,))
+        channel_ids = [row["channel_id"] for row in rows]
         for channel_id in channel_ids:
             if await self._channel_manageable(guild, channel_id):
                 continue
-            async with self.acquire_db() as db:
-                cur = await db.execute(
-                    "DELETE FROM slowmode_schedules WHERE guild_id = ? AND channel_id = ?",
-                    (guild.id, channel_id),
-                )
-                await db.commit()
+            await self.bot.db.execute_write(
+                "DELETE FROM slowmode_schedules WHERE guild_id = ? AND channel_id = ?",
+                (guild.id, channel_id),
+            )
             self._schedule_cache.pop(channel_id, None)
             result.actions.append(f"removed_schedules:{channel_id}")
         return result

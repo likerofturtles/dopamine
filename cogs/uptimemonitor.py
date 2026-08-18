@@ -1,8 +1,10 @@
-import discord
-from discord.ext import commands, tasks
-import aiohttp
 import asyncio
+
+import aiohttp
+from discord.ext import commands, tasks
+
 from config import HEARTBEAT_URL
+
 
 class StatusHeartbeat(commands.Cog):
     def __init__(self, bot):

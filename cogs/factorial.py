@@ -1,74 +1,25 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import aiosqlite
-import asyncio
+import ast
 import math
 import re
-import ast
 
+import discord
 from beacon import beacon_commands
-
-from config import FDB_PATH
-
-
-class ConnectionPool:
-
-    def __init__(self, db_path, max_connections=5):
-        self.db_path = db_path
-        self.max_connections = max_connections
-        self.queue = asyncio.Queue(maxsize=max_connections)
-        self.connections = []
-
-    async def initialize(self):
-        for _ in range(self.max_connections):
-            conn = await aiosqlite.connect(self.db_path)
-            await conn.execute("PRAGMA journal_mode=WAL;")
-            await conn.execute("PRAGMA synchronous=NORMAL;")
-            await conn.commit()
-            self.connections.append(conn)
-            await self.queue.put(conn)
-
-    async def acquire(self):
-        return await self.queue.get()
-
-    async def release(self, conn):
-        await self.queue.put(conn)
-
-    async def close(self):
-        for conn in self.connections:
-            await conn.close()
+from discord.ext import commands
 
 
 class FactorialCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db_pool = ConnectionPool(FDB_PATH, max_connections=5)
         self.enabled_cache = set()
         self.regex = re.compile(r'([0-9\.\+\-\*\/\(\)\^\s]+)!')
 
     async def cog_load(self):
-        await self.db_pool.initialize()
-
-        conn = await self.db_pool.acquire()
-        try:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS enabled_guilds (
-                    guild_id INTEGER PRIMARY KEY
-                )
-            """)
-            await conn.commit()
-
-            async with conn.execute("SELECT guild_id FROM enabled_guilds") as cursor:
-                rows = await cursor.fetchall()
-                self.enabled_cache = {row[0] for row in rows}
-
-
-        finally:
-            await self.db_pool.release(conn)
+        await self.bot.db.wait_ready()
+        rows = await self.bot.db.execute("SELECT guild_id FROM enabled_guilds")
+        self.enabled_cache = {row["guild_id"] for row in rows}
 
     async def cog_unload(self):
-        await self.db_pool.close()
+        pass
 
     def safe_eval_math(self, expr_str):
         operators = {
@@ -155,32 +106,20 @@ class FactorialCog(commands.Cog):
     @beacon_commands.command(name="factorial", description="Toggle accidental factorial detection for this server.", permissions_preset="manager")
     async def factorial_toggle(self, interaction: discord.Interaction):
         guild_id = interaction.guild_id
-        conn = await self.db_pool.acquire()
+        rows = await self.bot.db.execute("SELECT 1 FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
+        exists = bool(rows)
 
-        try:
-            async with conn.execute("SELECT 1 FROM enabled_guilds WHERE guild_id = ?", (guild_id,)) as cursor:
-                exists = await cursor.fetchone()
-
-            if exists:
-                await conn.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
-                await conn.commit()
-
-                if guild_id in self.enabled_cache:
-                    self.enabled_cache.remove(guild_id)
-
-                await interaction.response.send_message("Factorial detection has been **DISABLED** for this server.",
-                                                        ephemeral=False)
-            else:
-                await conn.execute("INSERT OR IGNORE INTO enable_guilds (guild_id) VALUES (?)", (guild_id,))
-                await conn.commit()
-
-                self.enabled_cache.add(guild_id)
-
-                await interaction.response.send_message("Factorial detection has been **ENABLED** for this server.",
-                                                        ephemeral=False)
-
-        finally:
-            await self.db_pool.release(conn)
+        if exists:
+            await self.bot.db.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
+            if guild_id in self.enabled_cache:
+                self.enabled_cache.remove(guild_id)
+            await interaction.response.send_message("Factorial detection has been **DISABLED** for this server.",
+                                                    ephemeral=False)
+        else:
+            await self.bot.db.execute("INSERT OR IGNORE INTO enabled_guilds (guild_id) VALUES (?)", (guild_id,))
+            self.enabled_cache.add(guild_id)
+            await interaction.response.send_message("Factorial detection has been **ENABLED** for this server.",
+                                                    ephemeral=False)
 
     def data_features(self) -> list:
         from utils.data_protocol import DataFeatureMeta
@@ -203,14 +142,11 @@ class FactorialCog(commands.Cog):
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None):
         from utils.data_protocol import DataDeleteResult
-        conn = await self.db_pool.acquire()
-        try:
-            cur = await conn.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
-            await conn.commit()
-        finally:
-            await self.db_pool.release(conn)
+        rows_before = len(self.enabled_cache)
+        await self.bot.db.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
         self.enabled_cache.discard(guild_id)
-        return DataDeleteResult(feature_id="factorial", deleted=True, rows_affected=cur.rowcount)
+        rows_affected = rows_before - len(self.enabled_cache)
+        return DataDeleteResult(feature_id="factorial", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult

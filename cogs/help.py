@@ -1,11 +1,8 @@
-import time
-from typing import List, Tuple, Dict, Any, Union
+from typing import Dict, Union
 
 import discord
-from discord import app_commands
-from discord.ext import commands
-
 from beacon import beacon_commands
+from discord.ext import commands
 
 EMBED_COLOR = discord.Color(0x944ae8)
 VOTE_URL = "https://top.gg/bot/1411266382380924938/vote"

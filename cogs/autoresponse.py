@@ -1,23 +1,21 @@
 import asyncio
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Any, Set, Callable, Awaitable
+from typing import Dict, List, Optional, Any, Set
 
 import aiosqlite
 import discord
-from discord import app_commands
+from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands
 from rapidfuzz import fuzz
 
-from config import ARSPDB_PATH
-from beacon import PrivateLayoutView, beacon_commands
 from cogs.embed import UseEmbedPage
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
-import re
 
 
 @dataclass
@@ -929,67 +927,22 @@ class TextResponseModal(discord.ui.Modal):
 class Autoresponse(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.cache: Dict[int, Dict[int, AutoresponseRecord]] = {}
 
     async def cog_load(self):
-        await self.init_pools(pool_size=5)
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.populate_cache()
 
     async def cog_unload(self):
-        if self.db_pool is not None:
-            while not self.db_pool.empty():
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except (asyncio.QueueEmpty, Exception):
-                    break
-
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await aiosqlite.connect(
-                    ARSPDB_PATH,
-                    timeout=5,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA synchronous = NORMAL")
-                await conn.commit()
-                await self.db_pool.put(conn)
+        pass
 
     @asynccontextmanager
     async def acquire_db(self):
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS autoresponses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER,
-                    trigger TEXT,
-                    response_type TEXT,
-                    response_text TEXT,
-                    embed_content TEXT,
-                    embed_data TEXT,
-                    channels TEXT,
-                    match_mode TEXT,
-                    fuzzy_threshold INTEGER DEFAULT 75,
-                    case_sensitive INTEGER DEFAULT 0,
-                    created_by INTEGER,
-                    created_at INTEGER
-                )
-                """
-            )
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def populate_cache(self):
         async with self.acquire_db() as db:

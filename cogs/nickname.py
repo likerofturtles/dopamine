@@ -1,14 +1,13 @@
 import asyncio
-import aiosqlite
-import discord
-from discord import app_commands, Interaction
-from discord._types import ClientT
-from discord.ext import commands, tasks
-from typing import Dict, List, Optional, Set, Tuple
 import re
-from config import NFDB_PATH, DB_PATH
-from beacon import beacon_commands
 from contextlib import asynccontextmanager
+from typing import Dict, Set
+
+import discord
+from beacon import beacon_commands
+from discord import app_commands
+from discord.ext import commands
+
 from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.log import LoggingManager
@@ -141,98 +140,24 @@ class Nickname(commands.Cog):
         self.serversettingscache: Dict[int, Dict] = {}
         self.profanitycache: Set[str] = set()
         self.verifiedcache: Dict[int, Set[int]] = {}
-        self.db_pool: Optional[asyncio.Queue[aiosqlite.Connection]] = None
         self.manager = LoggingManager
 
     async def cog_load(self):
-        await self.init_pools()
-        await self.init_db()
+        await self.bot.db.wait_ready()
         await self.load_profanity_cache()
         await self.load_serversettings_cache()
         await self.load_verified_cache()
 
     async def cog_unload(self):
-        if self.db_pool is not None:
-            for _ in range(self.db_pool.qsize()):
-                try:
-                    conn = self.db_pool.get_nowait()
-                    await conn.close()
-                except asyncio.QueueEmpty:
-                    break
-                except Exception as e:
-                    print(f"Error closing connection during unload: {e}")
-
-            self.db_pool = None
-
-    async def createpooledconnection(self, path: str) -> aiosqlite.Connection:
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                conn = await aiosqlite.connect(
-                    path,
-                    timeout=5,
-                    isolation_level=None,
-                )
-                await conn.execute("PRAGMA busy_timeout=5000")
-                await conn.execute("PRAGMA journal_mode=WAL")
-                await conn.execute("PRAGMA wal_autocheckout=1000")
-                await conn.execute("PRAGMA synchronous=NORMAL")
-                await conn.execute("PRAGMA optimize")
-                await conn.commit()
-                return conn
-            except Exception:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.1 * (2 ** attempt))
-                    continue
-                raise
-    async def init_pools(self, pool_size: int = 5):
-        if self.db_pool is None:
-            self.db_pool = asyncio.Queue(maxsize=pool_size)
-            for _ in range(pool_size):
-                conn = await self.createpooledconnection(NFDB_PATH)
-                await self.db_pool.put(conn)
+        pass
 
     @asynccontextmanager
-    async def acquire_db(self) -> aiosqlite.Connection:
-        assert self.db_pool is not None
-        conn = await self.db_pool.get()
-        try:
-            yield conn
-        finally:
-            await self.db_pool.put(conn)
+    async def acquire_db(self):
+        async with self.bot.db.acquire_db() as db:
+            yield db
 
     async def init_db(self):
-        async with self.acquire_db() as db:
-            await db.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS serversettings (
-                    guild_id INTEGER NOT NULL PRIMARY KEY,
-                    symbol_filter INTEGER DEFAULT 0,
-                    profanity_filter INTEGER DEFAULT 0,
-                    placeholder TEXT DEFAULT 'Change your nickname',
-                    last_scan INTEGER DEFAULT 0
-                )
-                '''
-            )
-            await db.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS profanity (
-                    word TEXT NOT NULL PRIMARY KEY
-                )
-                '''
-
-            )
-            await db.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS verified (
-                    guild_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    PRIMARY KEY (guild_id, user_id)
-                )
-                '''
-
-            )
-            await db.commit()
+        await self.bot.db.wait_ready()
 
     async def load_profanity_cache(self):
         async with self.acquire_db() as db:
@@ -692,11 +617,9 @@ class Nickname(commands.Cog):
             )
             verified = await export_table(
                 db, "SELECT guild_id, user_id FROM verified WHERE guild_id = ?", (guild_id,))
-            profanity = await export_table(db, "SELECT word FROM profanity")
         chunk.guild_data[guild_id] = {
             "settings": settings,
             "verified": verified,
-            "profanity": profanity,
         }
         return chunk
 

@@ -19,51 +19,23 @@ if not TOKEN:
 DBL_TOKEN = os.getenv("DBL_TOKEN", None)
 API_TOKEN = os.getenv("API_TOKEN", None)
 HEARTBEAT_ID = os.getenv("HEARTBEAT_ID", None)
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", None)
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", None)
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent
 
-# Database paths
-DB_PATH = str(BASE_DIR / "databases" / "points.db")
-TDB_PATH = str(BASE_DIR / "databases" / "temp.db")
-VDB_PATH = str(BASE_DIR / "databases" / "values.db")
-TOPDB_PATH = str(BASE_DIR / "databases" / "topgg.db")
-SMDB_PATH = str(BASE_DIR / "databases" / "scheduled_messages.db")
-STICKYDB_PATH = str(BASE_DIR / "databases" / "sticky_messages.db")
-ARDB_PATH = str(BASE_DIR / "databases" / "autoreact.db")
-HDDB_PATH = str(BASE_DIR / "databases" / "haiku_detection.db")
-HWDDB_PATH = str(BASE_DIR / "databases" / "haiku_words.db")
-NOTEDB_PATH = str(BASE_DIR / "databases" / "notes.db")
-MCTDB_PATH = str(BASE_DIR / "databases" / "member_count_tracker.db")
-SDB_PATH = str(BASE_DIR / "databases" / "starboard.db")
-SKDB_PATH = str(BASE_DIR / "databases" / "skullboard.db")
-ALERTDB_PATH = str(BASE_DIR / "databases" / "alerts.db")
+# Turso database path
+TURSO_LOCAL_PATH = str(BASE_DIR / "databases" / "dopamine.db")
+DATABASES_DIR = BASE_DIR / "databases"
+
+# Asset paths (fonts, images, etc.)
 MAX_PATH = BASE_DIR / "databases" / "MAXWITHSTRAPON.jpg"
 FONT_PATH = BASE_DIR / "databases" / "max.ttf"
-BDB_PATH = str(BASE_DIR / "databases" / "battery.db")
-SSDB_PATH = str(BASE_DIR / "databases" / "slowmode.db")
-NFDB_PATH = str(BASE_DIR / "databases" / "nickname.db")
-GDB_PATH = str(BASE_DIR / "databases" / "giveaway.db")
-LDB_PATH = str(BASE_DIR / "databases" / "logging.db")
-WDB_PATH = str(BASE_DIR / "databases" / "welcome.db")
-LEDB_PATH = str(BASE_DIR / "databases" / "leave.db")
 WELCOMECARD_PATH = BASE_DIR / "databases" / "welcomecard.png"
 LEAVECARD_PATH = BASE_DIR / "databases" / "welcomecard.png"
 BOLDFONT_PATH = BASE_DIR / "databases" / "Bold.ttf"
 MEDIUMFONT_PATH = BASE_DIR / "databases" / "Medium.ttf"
-FDB_PATH = str(BASE_DIR / "databases" / "factorial.db")
-APDB_PATH = str(BASE_DIR / "databases" / "autopublish.db")
-SPDB_PATH = str(BASE_DIR / "databases" / "selfpurge.db")
-BAN_PATH = str(BASE_DIR / "databases" / "ban.db")
-DP_PATH = str(BASE_DIR / "databases" / "discordphone.db")
-DDB_PATH = str(BASE_DIR / "databases" / "daily.db")
-EDB_PATH = str(BASE_DIR / "databases" / "embeds.db")
-ARSPDB_PATH = str(BASE_DIR / "databases" / "autoresponse.db")
-AFKDB_PATH = str(BASE_DIR / "databases" / "afk.db")
-TOURNEYDB_PATH = str(BASE_DIR / "databases" / "tournaments.db")
-DATADB_PATH = str(BASE_DIR / "databases" / "data.db")
-DATABASES_DIR = BASE_DIR / "databases"
-BACKUP_DIR = BASE_DIR / "backup"
 
 # Top.gg settings
 TOPGG_API_URL = "https://top.gg/api/bots/{bot_id}/check"
