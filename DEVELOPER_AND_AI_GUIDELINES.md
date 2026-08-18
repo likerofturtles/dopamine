@@ -9,7 +9,7 @@ Welcome to the **Dopamine** Discord bot codebase. This document serves as the au
 1. **Database Engine:** [`Turso`](https://turso.tech) (SQLite-compatible) persistence layer via [`pyturso`](requirements.txt:1). Local file database stored at [`databases/dopamine.db`](config.py:29) with optional remote replication sync urls (`TURSO_DATABASE_URL`).
 2. **Connection Management:** A single, shared database connection instance (`DatabaseManager` in [`utils/database.py`](utils/database.py:74)) managed thread-safely using `asyncio.Lock()` and `asyncio.Event()`.
 3. **Centralized Data Access:** All SQL queries and database operations must be executed exclusively through [`DatabaseManager`](utils/database.py:74) methods (`execute`, `execute_write`).
-4. **Cogs Integration Rule:** Cogs must **directly** call methods on `DatabaseManager` (`self.bot.db.execute(...)` or `self.bot.db.execute_write(...)`). 
+4. **Cogs Integration Rule:** Cogs must **directly** call methods on `DatabaseManager` (`self.bot.db.execute(...)` or `self.bot.db.execute_write(...)`. OR you can also use ` self.bot.db.acquire_db(...)` if you need to execute multiple multiple database queries or statements sequentially within the exact same locked transaction session, whereas the previous two are designed for single, atomic SQL statements). 
    - ❌ **NO custom wrapper methods** in cogs or helpers.
    - ❌ **NO local connection acquisition helpers** (e.g. `acquire_db`).
    - ❌ **NO duplicate query logic**.
