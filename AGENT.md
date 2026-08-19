@@ -1,4 +1,4 @@
-# Dopamine Bot - Developer & AI Agent Guidelines (`DEVELOPER_AND_AI_GUIDELINES.md`)
+# Dopamine Bot - Developer & AI Agent Guidelines (`AGENT.md`)
 
 Welcome to the **Dopamine** Discord bot codebase. This document serves as the authoritative, production-ready reference for developers, AI coding agents/assistants, aliens, and everything and everyone else in between who's contributing to this project. All code modifications, architectural additions, and database interactions must strictly adhere to the guidelines set forth herein.
 
