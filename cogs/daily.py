@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 import random
 from datetime import datetime, timedelta, time
 from typing import Optional, List, Tuple, Any, Dict
@@ -11,6 +12,8 @@ from discord.ext import commands, tasks
 
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
+
+logger = logging.getLogger(__name__)
 
 
 class DeleteImageModal(discord.ui.Modal):
@@ -242,32 +245,45 @@ class DailyCats(commands.Cog):
         self.active_cat_channels = set()
         self.next_send_time = None
 
-        self.init_data.start()
-
-    def cog_unload(self):
-        self.init_data.cancel()
-        self.daily_task.cancel()
-
-        self.active_cat_channels.clear()
-        self.active_cat_channels = None
-        self.next_send_time = None
-
-    @tasks.loop(count=1)
-    async def init_data(self):
+    async def cog_load(self):
         await self.bot.db.wait_ready()
 
         rows = await self.bot.db.execute("SELECT channel_id FROM cat_channels")
         self.active_cat_channels = {row["channel_id"] for row in rows}
+        logger.info(f"Loaded {len(self.active_cat_channels)} active cat channels.")
 
         rows = await self.bot.db.execute("SELECT value FROM daily_settings WHERE key = 'next_send_time'")
         if rows:
-            self.next_send_time = datetime.fromisoformat(rows[0]["value"])
+            try:
+                parsed_time = datetime.fromisoformat(rows[0]["value"])
+                if parsed_time <= datetime.now():
+                    logger.warning(f"Stored next_send_time ({parsed_time}) is in the past. Resetting to next schedule.")
+                    now = datetime.now()
+                    self.next_send_time = datetime.combine(now.date() + timedelta(days=1), time(0, 0))
+                    await self.save_next_time()
+                else:
+                    self.next_send_time = parsed_time
+            except Exception as e:
+                logger.error(f"Failed to parse stored next_send_time: {e}. Resetting.")
+                now = datetime.now()
+                self.next_send_time = datetime.combine(now.date() + timedelta(days=1), time(0, 0))
+                await self.save_next_time()
         else:
             now = datetime.now()
             self.next_send_time = datetime.combine(now.date() + timedelta(days=1), time(0, 0))
             await self.save_next_time()
 
+        logger.info(f"DailyCats initialized. Next cat send scheduled at {self.next_send_time}")
         self.daily_task.start()
+
+    def cog_unload(self):
+        self.daily_task.cancel()
+
+        if self.active_cat_channels is not None:
+            self.active_cat_channels.clear()
+            self.active_cat_channels = None
+        self.next_send_time = None
+        logger.info("DailyCats cog unloaded.")
 
     async def save_next_time(self):
         await self.bot.db.execute_write(
@@ -397,8 +413,11 @@ class DailyCats(commands.Cog):
 
             await asyncio.gather(*(send_to_channel(cid) for cid in list(self.active_cat_channels)))
 
-            self.next_send_time = self.next_send_time + timedelta(hours=23)
+            self.next_send_time = self.next_send_time + timedelta(days=1)
+            while self.next_send_time <= datetime.now():
+                self.next_send_time = self.next_send_time + timedelta(days=1)
             await self.save_next_time()
+            logger.info(f"Daily cat pictures sent successfully. Next send scheduled at {self.next_send_time}")
 
     daily = app_commands.Group(name="daily", description="Daily automated messages.")
 
