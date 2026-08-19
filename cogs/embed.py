@@ -135,7 +135,7 @@ class Embeds(commands.Cog):
         now_ts = int(discord.utils.utcnow().timestamp())
 
         if existing_id is None:
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 """
                 INSERT INTO embeds (
                     guild_id, name, content, title, description, color, url,
@@ -166,7 +166,7 @@ class Embeds(commands.Cog):
             row = await self.bot.db.execute("SELECT last_insert_rowid() AS id")
             return row[0]["id"] if row else 0
         else:
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 """
                 UPDATE embeds
                 SET name = ?, content = ?, title = ?, description = ?, color = ?, url = ?,
@@ -208,7 +208,7 @@ class Embeds(commands.Cog):
         )
 
     async def delete_embed(self, guild_id: int, embed_id: int) -> None:
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "DELETE FROM embeds WHERE id = ? AND guild_id = ?",
             (embed_id, guild_id),
         )
@@ -239,7 +239,7 @@ class Embeds(commands.Cog):
         count_rows = await self.bot.db.execute(
             "SELECT COUNT(*) AS cnt FROM embeds WHERE guild_id = ?", (guild_id,))
         rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
         return DataDeleteResult(feature_id="embeds", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:

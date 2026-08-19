@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import discord
 import pytz
@@ -27,13 +29,13 @@ COMMON_TIMEZONES = [
 ]
 
 class DestructiveConfirmationView(PrivateLayoutView):
-    def __init__(self, title_text: str, body_text: str, color: discord.Color = None):
+    def __init__(self, title_text: str, body_text: str, color: discord.Color | None = None):
         super().__init__(timeout=30)
-        self.value = None
+        self.value: bool | None = None
         self.title_text = title_text
         self.body_text = body_text
         self.color = color
-        self.message: discord.Message = None
+        self.message: discord.Message | None = None
         self.build_layout()
 
     def build_layout(self):
@@ -111,7 +113,6 @@ class ScheduledSlowmode(commands.Cog):
             self._schedule_cache[cid].append(
                 (row["start_min_utc"], row["end_min_utc"], row["delay_seconds"]))
 
-
     async def check_vote_access(self, user_id: int) -> bool:
         voter_cog = self.bot.get_cog('TopGGVoter')
         if not voter_cog: return True
@@ -155,7 +156,6 @@ class ScheduledSlowmode(commands.Cog):
         else:
             return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
-
     async def timezone_autocomplete(self, interaction: discord.Interaction, current: str) -> list[
         Choice[str | int | float]]:
         return [app_commands.Choice(name=tz, value=tz) for tz in COMMON_TIMEZONES if current.lower() in tz.lower()][:25]
@@ -172,10 +172,9 @@ class ScheduledSlowmode(commands.Cog):
                         current.lower() in name.lower()])
         return choices[:25]
 
-
     slowmode_group = app_commands.Group(name="slowmode", description="Manage scheduled slowmode")
     schedule_group = beacon_commands.Group(name="schedule", description="Configure slowmode schedules",
-                                        parent=slowmode_group, permissions_preset="manager")
+                                         parent=slowmode_group, permissions_preset="manager")
 
     @slowmode_group.command(name="configure", description="Directly configure slowmode for a channel.")
     @app_commands.describe(channel="The channel to configure slowmode for",
@@ -245,7 +244,7 @@ class ScheduledSlowmode(commands.Cog):
                                                                ephemeral=True)
 
         async with self.lock:
-            await self.bot.db.execute('''
+            await self.bot.db.execute_write('''
                 INSERT INTO slowmode_schedules (guild_id, channel_id, delay_seconds, start_min_utc, end_min_utc)
                 VALUES (?, ?, ?, ?, ?)
                 ''', (interaction.guild.id, channel.id, interval, utc_start, utc_end))
@@ -270,14 +269,12 @@ class ScheduledSlowmode(commands.Cog):
                                                                                color=discord.Color.red()),
                                                            ephemeral=True)
 
-
         body_content = f"Are you sure you want to delete **ALL** slowmode schedules for {channel.mention}?\nThis will also disable any currently active scheduled slowmode."
         view = DestructiveConfirmationView("Pending Confirmation", body_content)
-        response = await interaction.response.send_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
         view.message = await interaction.original_response()
         await view.wait()
 
-        await view.wait()
         if view.value is True:
             async with self.lock:
                 await self.bot.db.execute_write(

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import time
-from contextlib import asynccontextmanager
 from typing import Optional, Dict, List, Any
 
 import discord
@@ -211,13 +210,11 @@ class EditPage(PrivateLayoutView):
             async def on_pick(inter: discord.Interaction, content: Optional[str], embed_obj: discord.Embed):
                 raw_embed = json.dumps(embed_obj.to_dict(), ensure_ascii=False)
                 title = self.panel_data["title"]
-                async with self.cog.acquire_db() as db:
-                    await db.execute(
-                        "UPDATE sticky_panels SET response_type = ?, response_text = NULL, embed_content = ?, embed_data = ? "
-                        "WHERE guild_id = ? AND title = ?",
-                        ("embed", content or None, raw_embed, self.guild_id, title),
-                    )
-                    await db.commit()
+                await self.cog.bot.db.execute_write(
+                    "UPDATE sticky_panels SET response_type = ?, response_text = NULL, embed_content = ?, embed_data = ? "
+                    "WHERE guild_id = ? AND title = ?",
+                    ("embed", content or None, raw_embed, self.guild_id, title),
+                )
 
                 panel = self.cog.panel_cache[self.guild_id][title]
                 panel["response_type"] = "embed"
@@ -266,10 +263,8 @@ class EditPage(PrivateLayoutView):
 
         new_val = 0 if panel.get('include_bots', 1) else 1
 
-        async with self.cog.acquire_db() as db:
-            await db.execute("UPDATE sticky_panels SET include_bots = ? WHERE guild_id = ? AND title = ?",
-                             (new_val, self.guild_id, title))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET include_bots = ? WHERE guild_id = ? AND title = ?",
+                                          (new_val, self.guild_id, title))
 
         panel['include_bots'] = new_val
         self.panel_data['include_bots'] = new_val
@@ -283,10 +278,8 @@ class EditPage(PrivateLayoutView):
 
         new_mode = "One Shot" if panel.get('conv_mode', 'Dynamic') == "Dynamic" else "Dynamic"
 
-        async with self.cog.acquire_db() as db:
-            await db.execute("UPDATE sticky_panels SET conv_mode = ? WHERE guild_id = ? AND title = ?",
-                             (new_mode, self.guild_id, title))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET conv_mode = ? WHERE guild_id = ? AND title = ?",
+                                          (new_mode, self.guild_id, title))
 
         panel['conv_mode'] = new_mode
         self.panel_data['conv_mode'] = new_mode
@@ -473,12 +466,10 @@ class ChannelSelectView(PrivateLayoutView):
             old_channel_id = panel['channel_id']
             panel['channel_id'] = selected_channel.id
 
-            async with self.cog.acquire_db() as db:
-                await db.execute(
-                    "UPDATE sticky_panels SET channel_id = ?, last_message_id = NULL WHERE guild_id = ? AND title = ?",
-                    (selected_channel.id, self.guild_id, self.panel_title)
-                )
-                await db.commit()
+            await self.cog.bot.db.execute_write(
+                "UPDATE sticky_panels SET channel_id = ?, last_message_id = NULL WHERE guild_id = ? AND title = ?",
+                (selected_channel.id, self.guild_id, self.panel_title)
+            )
 
             self.cog.active_channels.pop(old_channel_id, None)
             self.cog.active_channels[selected_channel.id] = panel
@@ -649,10 +640,8 @@ class DurationModal(discord.ui.Modal):
         except ValueError:
             return await interaction.response.send_message("Enter a number between 0 and 60.", ephemeral=True)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute("UPDATE sticky_panels SET conversation_duration = ? WHERE guild_id = ? AND title = ?",
-                             (val, self.guild_id, self.title_name))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET conversation_duration = ? WHERE guild_id = ? AND title = ?",
+                                          (val, self.guild_id, self.title_name))
 
         self.cog.panel_cache[self.guild_id][self.title_name]['conversation_duration'] = val
         self.parent_view.panel_data['conversation_duration'] = val
@@ -702,13 +691,11 @@ class StickyTextSetupModal(discord.ui.Modal):
                 await interaction.response.send_message("Sticky message not found.", ephemeral=True)
                 return
 
-            async with self.cog.acquire_db() as db:
-                await db.execute(
-                    "UPDATE sticky_panels SET title = ?, response_type = ?, response_text = ?, embed_content = NULL, embed_data = NULL "
-                    "WHERE guild_id = ? AND title = ?",
-                    (title, "text", response_text, self.guild_id, self.original_title),
-                )
-                await db.commit()
+            await self.cog.bot.db.execute_write(
+                "UPDATE sticky_panels SET title = ?, response_type = ?, response_text = ?, embed_content = NULL, embed_data = NULL "
+                "WHERE guild_id = ? AND title = ?",
+                (title, "text", response_text, self.guild_id, self.original_title),
+            )
 
             panel["title"] = title
             panel["response_type"] = "text"
@@ -741,11 +728,9 @@ class StickyTextSetupModal(discord.ui.Modal):
             "conv_mode": "Dynamic"
         }
 
-        async with self.cog.acquire_db() as db:
-            cols = ", ".join(data.keys())
-            placeholders = ", ".join(["?"] * len(data))
-            await db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
-            await db.commit()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
 
         self.cog.panel_cache.setdefault(self.guild_id, {})[title] = data
         self.cog.active_channels[self.channel_id] = data
@@ -794,11 +779,9 @@ class StickyEmbedNameModal(discord.ui.Modal):
             "conv_mode": "Dynamic"
         }
 
-        async with self.cog.acquire_db() as db:
-            cols = ", ".join(data.keys())
-            placeholders = ", ".join(["?"] * len(data))
-            await db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
-            await db.commit()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
 
         cache_data = dict(data)
         cache_data["embed_data"] = self.embed_data
@@ -867,35 +850,32 @@ class StickySetupModal(discord.ui.Modal):
             "panel_id": int(time.time())
         }
 
-        async with self.cog.acquire_db() as db:
-            if self.is_edit:
-                panel = self.cog.panel_cache[self.guild_id].get(self.original_title)
+        if self.is_edit:
+            panel = self.cog.panel_cache[self.guild_id].get(self.original_title)
 
-                panel.update({
-                    "title": title,
-                    "embed_color": color_val or None,
-                    "description": self.description_input.value or None,
-                    "image_url": self.image_url_input.value or None,
-                    "footer": self.footer_input.value or None,
-                })
+            panel.update({
+                "title": title,
+                "embed_color": color_val or None,
+                "description": self.description_input.value or None,
+                "image_url": self.image_url_input.value or None,
+                "footer": self.footer_input.value or None,
+            })
 
-                if title != self.original_title:
-                    self.cog.panel_cache[self.guild_id][title] = self.cog.panel_cache[self.guild_id].pop(
-                        self.original_title)
+            if title != self.original_title:
+                self.cog.panel_cache[self.guild_id][title] = self.cog.panel_cache[self.guild_id].pop(
+                    self.original_title)
 
-                async with self.cog.acquire_db() as db:
-                    await db.execute("""UPDATE sticky_panels SET title=?, description=?, footer=?, image_url=?, embed_color=?
-                                        WHERE guild_id=? AND title=?""",
-                                     (title, panel['description'], panel['footer'], panel['image_url'], color_val,
-                                      self.guild_id, self.original_title))
-                msg = f"Sticky message **{title}** updated!"
-                data = panel
-            else:
-                cols = ", ".join(data.keys());
-                placeholders = ", ".join(["?"] * len(data))
-                await db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
-                msg = f"Sticky message **{title}** created!"
-            await db.commit()
+            await self.cog.bot.db.execute_write("""UPDATE sticky_panels SET title=?, description=?, footer=?, image_url=?, embed_color=?
+                                WHERE guild_id=? AND title=?""",
+                             (title, panel['description'], panel['footer'], panel['image_url'], color_val,
+                              self.guild_id, self.original_title))
+            msg = f"Sticky message **{title}** updated!"
+            data = panel
+        else:
+            cols = ", ".join(data.keys())
+            placeholders = ", ".join(["?"] * len(data))
+            await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
+            msg = f"Sticky message **{title}** created!"
 
         if self.guild_id not in self.cog.panel_cache: self.cog.panel_cache[self.guild_id] = {}
         self.cog.panel_cache[self.guild_id][title] = data
@@ -926,42 +906,30 @@ class StickyMessages(commands.Cog):
         for t in self.sticky_tasks.values():
             t.cancel()
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
-    async def init_db(self):
-        await self.bot.db.wait_ready()
-
     async def populate_caches(self):
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM sticky_panels") as cursor:
-                rows = cursor.fetchall()
-                cols = [c[0] for c in cursor.description]
-                for r in rows:
-                    d = dict(zip(cols, r))
-                    if d.get("response_type") is None:
-                        d["response_type"] = "embed"
-                    raw_embed = d.get("embed_data")
-                    if raw_embed:
-                        try:
-                            d["embed_data"] = json.loads(raw_embed)
-                        except Exception:
-                            d["embed_data"] = None
-                    self.panel_cache.setdefault(d["guild_id"], {})[d["title"]] = d
-                    if d["channel_id"]: self.active_channels[d["channel_id"]] = d
+        rows = await self.bot.db.execute("SELECT * FROM sticky_panels")
+        for d in rows:
+            if d.get("response_type") is None:
+                d["response_type"] = "embed"
+            raw_embed = d.get("embed_data")
+            if raw_embed:
+                try:
+                    d["embed_data"] = json.loads(raw_embed)
+                except Exception:
+                    d["embed_data"] = None
+            self.panel_cache.setdefault(d["guild_id"], {})[d["title"]] = d
+            if d["channel_id"]:
+                self.active_channels[d["channel_id"]] = d
 
     def get_guild_panels(self, guild_id: int) -> List[dict]:
         return list(self.panel_cache.get(guild_id, {}).values())
 
     async def delete_panel(self, guild_id: int, title: str):
         panel = self.panel_cache.get(guild_id, {}).pop(title, None)
-        if not panel: return
+        if not panel:
+            return
         self.active_channels.pop(panel['channel_id'], None)
-        async with self.acquire_db() as db:
-            await db.execute("DELETE FROM sticky_panels WHERE guild_id = ? AND title = ?", (guild_id, title))
-            await db.commit()
+        await self.bot.db.execute_write("DELETE FROM sticky_panels WHERE guild_id = ? AND title = ?", (guild_id, title))
 
     def build_panel_embed(self, data: dict) -> discord.Embed:
         color = parse_color(data.get('embed_color', ''))
@@ -1032,10 +1000,8 @@ class StickyMessages(commands.Cog):
                 new_msg = await channel.send(content=panel.get("embed_content"), embed=embed_obj)
             else:
                 new_msg = await channel.send(embed=self.build_panel_embed(panel))
-            async with self.acquire_db() as db:
-                await db.execute("UPDATE sticky_panels SET last_message_id = ? WHERE guild_id = ? AND title = ?",
-                                 (new_msg.id, panel['guild_id'], panel['title']))
-                await db.commit()
+            await self.bot.db.execute_write("UPDATE sticky_panels SET last_message_id = ? WHERE guild_id = ? AND title = ?",
+                                          (new_msg.id, panel['guild_id'], panel['title']))
             panel['last_message_id'] = new_msg.id
         except Exception as e:
             if is_access_error(e):
@@ -1074,7 +1040,7 @@ class StickyMessages(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="sticky_messages")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             rows = await export_table(db, "SELECT * FROM sticky_panels WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"sticky_panels": rows}
         return chunk
@@ -1086,14 +1052,12 @@ class StickyMessages(commands.Cog):
         if feature_id and feature_id != "sticky_messages":
             return DataDeleteResult(feature_id="sticky_messages")
         panels = list(self.panel_cache.get(guild_id, {}).keys())
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM sticky_panels WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        rows_affected = await self.bot.db.execute_write("DELETE FROM sticky_panels WHERE guild_id = ?", (guild_id,))
         for title in panels:
             panel = self.panel_cache.get(guild_id, {}).pop(title, None)
             if panel:
                 self.active_channels.pop(panel.get("channel_id"), None)
-        return DataDeleteResult(feature_id="sticky_messages", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="sticky_messages", deleted=True, rows_affected=rows_affected)
 
     async def _channel_sendable(self, guild: discord.Guild, channel_id: int) -> bool:
         channel = guild.get_channel(channel_id)

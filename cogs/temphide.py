@@ -1,7 +1,7 @@
 import asyncio
 import codecs
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 
 import discord
 from beacon import beacon_commands
@@ -35,14 +35,14 @@ class TempHideCog(commands.Cog):
             "hidden_text": hidden_text,
             "timestamp": timestamp
         }
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             'INSERT INTO temp_messages (message_id, user_id, hidden_text, timestamp) VALUES (?, ?, ?, ?)',
             (message_id, user_id, hidden_text, timestamp)
         )
         self.message_cache[message_id] = data
 
     async def delete_message(self, message_id: int):
-        await self.bot.db.execute('DELETE FROM temp_messages WHERE message_id = ?', (message_id,))
+        await self.bot.db.execute_write('DELETE FROM temp_messages WHERE message_id = ?', (message_id,))
         self.message_cache.pop(message_id, None)
 
     async def get_message(self, message_id: int) -> Optional[tuple[int, str]]:

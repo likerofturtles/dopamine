@@ -64,7 +64,7 @@ class ConfirmationView(PrivateLayoutView):
         guild_id = interaction.guild_id
 
         self.cog.cache_settings[guild_id] = True
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "INSERT OR REPLACE INTO selfpurge_guild_settings (guild_id, enabled) VALUES (?, 1)", (guild_id,))
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
@@ -107,7 +107,7 @@ class SelfPurge(commands.Cog):
         if not self.cache_settings[guild_id]:
             return await interaction.response.send_message("Self purge feature is already disabled!", ephemeral=True)
         self.cache_settings.pop(guild_id)
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
 
         await interaction.response.send_message("Self-purge has been disabled for this server.", ephemeral=True)
@@ -133,7 +133,7 @@ class SelfPurge(commands.Cog):
         execute_time = time.time() + 86400
 
         self.cache_purges[(guild_id, user_id)] = execute_time
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "INSERT OR REPLACE INTO scheduled_purges (guild_id, user_id, execute_at) VALUES (?, ?, ?)",
             (guild_id, user_id, execute_time))
 
@@ -147,7 +147,7 @@ class SelfPurge(commands.Cog):
 
         if key in self.cache_purges:
             del self.cache_purges[key]
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", key)
             await interaction.response.send_message("Your scheduled purge has been cancelled.", ephemeral=True)
         else:
@@ -168,7 +168,7 @@ class SelfPurge(commands.Cog):
             )
 
         del self.cache_purges[key]
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?",
             (guild_id, user_id)
         )
@@ -205,7 +205,7 @@ class SelfPurge(commands.Cog):
         for guild_id, user_id in to_execute:
             if (guild_id, user_id) in self.cache_purges:
                 del self.cache_purges[(guild_id, user_id)]
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", (guild_id, user_id))
 
             asyncio.create_task(self.execute_purge(guild_id, user_id))
@@ -282,11 +282,11 @@ class SelfPurge(commands.Cog):
         if feature_id and feature_id != "selfpurge":
             return DataDeleteResult(feature_id="selfpurge")
         if guild_ids is None:
-            await self.bot.db.execute("DELETE FROM scheduled_purges WHERE user_id = ?", (user_id,))
+            await self.bot.db.execute_write("DELETE FROM scheduled_purges WHERE user_id = ?", (user_id,))
             keys = [(g, u) for (g, u) in self.cache_purges if u == user_id]
         else:
             for gid in guild_ids:
-                await self.bot.db.execute(
+                await self.bot.db.execute_write(
                     "DELETE FROM scheduled_purges WHERE guild_id = ? AND user_id = ?", (gid, user_id))
             keys = [(gid, user_id) for gid in guild_ids if (gid, user_id) in self.cache_purges]
         for key in keys:
@@ -300,8 +300,8 @@ class SelfPurge(commands.Cog):
         for key in purge_keys:
             self.cache_purges.pop(key, None)
         self.cache_settings.pop(guild_id, None)
-        await self.bot.db.execute("DELETE FROM scheduled_purges WHERE guild_id = ?", (guild_id,))
-        await self.bot.db.execute("DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM scheduled_purges WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
         return DataDeleteResult(
             feature_id="selfpurge", deleted=True, rows_affected=len(purge_keys) + 1)
 

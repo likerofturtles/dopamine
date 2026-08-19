@@ -34,7 +34,7 @@ class UndoButtonView(PrivateView):
         try:
             if self.action_type == "create":
                 note_name = self.data["name"]
-                await self.cog.bot.db.execute(
+                await self.cog.bot.db.execute_write(
                     "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
                     (self.user_id, note_name)
                 )
@@ -50,12 +50,12 @@ class UndoButtonView(PrivateView):
                 old_content = self.data["old_content"]
 
                 if old_name != new_name:
-                    await self.cog.bot.db.execute(
+                    await self.cog.bot.db.execute_write(
                         "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
                         (self.user_id, new_name)
                     )
 
-                await self.cog.bot.db.execute(
+                await self.cog.bot.db.execute_write(
                     """
                     INSERT INTO user_notes (user_id, note_name, note_content, updated_at)
                     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -77,7 +77,7 @@ class UndoButtonView(PrivateView):
                 note_name = self.data["name"]
                 content = self.data["content"]
 
-                await self.cog.bot.db.execute(
+                await self.cog.bot.db.execute_write(
                     """
                     INSERT INTO user_notes (user_id, note_name, note_content)
                     VALUES (?, ?, ?)
@@ -162,7 +162,7 @@ class Notes(commands.Cog):
             user_id = interaction.user.id
 
             try:
-                await self.cog.bot.db.execute(
+                await self.cog.bot.db.execute_write(
                     """
                     UPDATE user_notes
                     SET note_name    = ?,
@@ -227,7 +227,7 @@ class Notes(commands.Cog):
             user_id = interaction.user.id
 
             try:
-                await self.cog.bot.db.execute(
+                await self.cog.bot.db.execute_write(
                     """
                     INSERT INTO user_notes (user_id, note_name, note_content)
                     VALUES (?, ?, ?) ON CONFLICT(user_id, note_name) DO
@@ -294,7 +294,7 @@ class Notes(commands.Cog):
         count_rows = await self.bot.db.execute(
             "SELECT COUNT(*) AS cnt FROM user_notes WHERE user_id = ?", (user_id,))
         rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute("DELETE FROM user_notes WHERE user_id = ?", (user_id,))
+        await self.bot.db.execute_write("DELETE FROM user_notes WHERE user_id = ?", (user_id,))
         self.notes_cache.pop(user_id, None)
         return DataDeleteResult(feature_id="notes", deleted=True, rows_affected=rows_affected)
 
@@ -442,7 +442,7 @@ async def note_delete(interaction: discord.Interaction, name: str):
         try:
             deleted_content = user_notes[name]
 
-            await cog.bot.db.execute(
+            await cog.bot.db.execute_write(
                 "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
                 (user_id, name),
             )

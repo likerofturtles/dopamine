@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Dict, Union
 
 import discord
@@ -11,12 +13,12 @@ VOTE_EMOJI = "🔒"
 
 
 class PrivateView(discord.ui.View):
-    def __init__(self, user, *args, **kwargs):
+    def __init__(self, user: discord.User | None = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user.id:
+        if self.user and interaction.user.id != self.user.id:
             await interaction.response.send_message(
                 "This isn't for you!",
                 ephemeral=True
@@ -25,12 +27,12 @@ class PrivateView(discord.ui.View):
         return True
 
 class PrivateSelect(discord.ui.Select):
-    def __init__(self, user, *args, **kwargs):
+    def __init__(self, user: discord.User | None = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user.id:
+        if self.user and interaction.user.id != self.user.id:
             await interaction.response.send_message(
                 "This isn't for you!",
                 ephemeral=True
@@ -40,7 +42,7 @@ class PrivateSelect(discord.ui.Select):
 
 class HelpSelect(PrivateSelect):
 
-    def __init__(self, user: discord.User, parent_view: "HelpView"):
+    def __init__(self, user: discord.User | None, parent_view: HelpView):
         options = [
             discord.SelectOption(label="Home", description="Introduction & links.", value="Home", emoji="🏠"),
             discord.SelectOption(label="Moderation",
@@ -59,7 +61,7 @@ class HelpSelect(PrivateSelect):
                                  description="Private notes, growth tracking, and misc. fun.", value="Utilities",
                                  emoji="📦"),
         ]
-        super().__init__(user, placeholder="Choose a feature category...", options=options, min_values=1, max_values=1, custom_id="help_select")
+        super().__init__(user=user, placeholder="Choose a feature category...", options=options, min_values=1, max_values=1, custom_id="help_select")
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
@@ -86,8 +88,8 @@ class HelpSelect(PrivateSelect):
 
 class HelpView(PrivateView):
 
-    def __init__(self, user: discord.User, embeds_map: Dict[str, discord.Embed], bot: commands.Bot = None):
-        super().__init__(user, timeout=None)
+    def __init__(self, user: discord.User | None, embeds_map: Dict[str, discord.Embed], bot: commands.Bot | None = None):
+        super().__init__(user=user, timeout=None)
         self.embeds_map = embeds_map
         self.bot = bot
         self.add_item(HelpSelect(user=user, parent_view=self))
@@ -102,8 +104,9 @@ class HelpCog(commands.Cog):
         self.last_help_time: Dict[Union[int, str], float] = {}
 
     async def cog_load(self):
+        await self.bot.db.wait_ready()
         embeds_map = self._build_embeds()
-        self.bot.add_view(HelpView(embeds_map, self.bot))
+        self.bot.add_view(HelpView(None, embeds_map, self.bot))
 
     def _build_embeds(self) -> Dict[str, discord.Embed]:
         icon_url = self.bot.user.display_avatar.url if self.bot.user else None
@@ -256,11 +259,11 @@ class HelpCog(commands.Cog):
 
     async def _send_help_message_prefix(self, ctx: commands.Context):
         embeds_map = self._build_embeds()
-        await ctx.send(embed=embeds_map["Home"], view=HelpView(embeds_map, self.bot))
+        await ctx.send(embed=embeds_map["Home"], view=HelpView(ctx.author, embeds_map, self.bot))
 
     async def _send_help_message_slash(self, interaction: discord.Interaction):
         embeds_map = self._build_embeds()
-        await interaction.response.send_message(embed=embeds_map["Home"], view=HelpView(embeds_map, self.bot))
+        await interaction.response.send_message(embed=embeds_map["Home"], view=HelpView(interaction.user, embeds_map, self.bot))
 
     @commands.command(name="help")
     async def help_prefix(self, ctx: commands.Context):

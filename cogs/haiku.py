@@ -314,7 +314,7 @@ class HaikuDetector(commands.Cog):
         count_rows = await self.bot.db.execute(
             "SELECT COUNT(*) AS cnt FROM haiku_settings WHERE guild_id = ?", (guild_id,))
         rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
         self.enabled_guilds.discard(guild_id)
         return DataDeleteResult(feature_id="haiku", deleted=True, rows_affected=rows_affected)
 
@@ -344,7 +344,7 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "INSERT OR REPLACE INTO haiku_settings (guild_id, is_enabled) VALUES (?, 1)",
             (interaction.guild.id,)
         )
@@ -370,7 +370,7 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        await self.bot.db.execute("UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?", (interaction.guild.id,))
+        await self.bot.db.execute_write("UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?", (interaction.guild.id,))
         self.enabled_guilds.discard(interaction.guild.id)
 
         embed = discord.Embed(
@@ -405,7 +405,7 @@ class HaikuDetector(commands.Cog):
                 try:
                     word = parts[0].lower().replace("'", "")
                     syllables = int(parts[1])
-                    await self.bot.db.execute(
+                    await self.bot.db.execute_write(
                         'INSERT OR REPLACE INTO haiku_words (word, syllables) VALUES (?, ?)',
                         (word, syllables),
                     )

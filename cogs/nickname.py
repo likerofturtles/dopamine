@@ -1,6 +1,5 @@
 import asyncio
 import re
-from contextlib import asynccontextmanager
 from typing import Dict, Set
 
 import discord
@@ -45,9 +44,10 @@ class PlaceholderModal(discord.ui.Modal, title="Change Placeholder Text"):
     async def on_submit(self, interaction: discord.Interaction):
         new_text = self.placeholder_input.value
 
-        async with self.cog.acquire_db() as db:
-            await db.execute('UPDATE serversettings SET placeholder = ? WHERE guild_id = ?', (new_text, self.guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            'UPDATE serversettings SET placeholder = ? WHERE guild_id = ?',
+            (new_text, self.guild_id)
+        )
 
         if self.guild_id in self.cog.serversettingscache:
             self.cog.serversettingscache[self.guild_id]['placeholder'] = new_text
@@ -89,9 +89,10 @@ class NicknameModeratorView(discord.ui.View):
         settings = self.cog.serversettingscache.get(self.guild_id, {})
         new_state = not settings.get('profanity_filter', False)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute('UPDATE serversettings SET profanity_filter = ? WHERE guild_id = ?', (int(new_state), self.guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            'UPDATE serversettings SET profanity_filter = ? WHERE guild_id = ?',
+            (int(new_state), self.guild_id)
+        )
 
         settings['profanity_filter'] = new_state
 
@@ -106,9 +107,10 @@ class NicknameModeratorView(discord.ui.View):
         settings = self.cog.serversettingscache.get(self.guild_id, {})
         new_state = not settings.get('symbol_filter', False)
 
-        async with self.cog.acquire_db() as db:
-            await db.execute('UPDATE serversettings SET symbol_filter = ? WHERE guild_id = ?', (int(new_state), self.guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            'UPDATE serversettings SET symbol_filter = ? WHERE guild_id = ?',
+            (int(new_state), self.guild_id)
+        )
 
         settings['symbol_filter'] = new_state
 
@@ -151,36 +153,22 @@ class Nickname(commands.Cog):
     async def cog_unload(self):
         pass
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
-    async def init_db(self):
-        await self.bot.db.wait_ready()
-
     async def load_profanity_cache(self):
-        async with self.acquire_db() as db:
-            async with db.execute('SELECT word FROM profanity') as cursor:
-                rows = cursor.fetchall()
-                self.profanitycache = {row[0] for row in rows}
+        rows = await self.bot.db.execute('SELECT word FROM profanity')
+        self.profanitycache = {row["word"] for row in rows}
 
     async def load_serversettings_cache(self):
-        async with self.acquire_db() as db:
-            async with db.execute('SELECT guild_id, symbol_filter, profanity_filter, placeholder, last_scan FROM serversettings ORDER BY guild_id') as cursor:
-                rows = cursor.fetchall()
-                self.serversettingscache = {row[0]: {"symbol_filter": row[1], "profanity_filter": row[2], "placeholder": row[3], "last_scan": row[4]} for row in rows}
+        rows = await self.bot.db.execute('SELECT guild_id, symbol_filter, profanity_filter, placeholder, last_scan FROM serversettings ORDER BY guild_id')
+        self.serversettingscache = {row["guild_id"]: {"symbol_filter": row["symbol_filter"], "profanity_filter": row["profanity_filter"], "placeholder": row["placeholder"], "last_scan": row["last_scan"]} for row in rows}
 
     async def load_verified_cache(self):
         temp_cache = {}
-        async with self.acquire_db() as db:
-            async with db.execute('SELECT guild_id, user_id FROM verified') as cursor:
-                rows = cursor.fetchall()
-                for row in rows:
-                    guild_id, user_id = row[0], row[1]
-                    if guild_id not in temp_cache:
-                        temp_cache[guild_id] = set()
-                    temp_cache[guild_id].add(user_id)
+        rows = await self.bot.db.execute('SELECT guild_id, user_id FROM verified')
+        for row in rows:
+            guild_id, user_id = row["guild_id"], row["user_id"]
+            if guild_id not in temp_cache:
+                temp_cache[guild_id] = set()
+            temp_cache[guild_id].add(user_id)
         self.verifiedcache = temp_cache
 
     async def isbadname(self, name: str, guild: discord.Guild, member_id: int) -> bool:
@@ -227,7 +215,6 @@ class Nickname(commands.Cog):
         if not channel_id:
             return
         log_ch = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
-        bot_user = member.guild.me
 
         description = (
             f"User's nickname has been moderated by **{reason}**.\n\n"
@@ -414,30 +401,29 @@ class Nickname(commands.Cog):
         is_verified = user_id in self.verifiedcache.get(guild_id, set())
         new_status = not is_verified
 
-        async with self.acquire_db() as db:
-            if is_verified:
-                await db.execute(
-                    'DELETE FROM verified WHERE guild_id = ? AND user_id = ?',
-                    (guild_id, user_id),
-                )
-                self.verifiedcache[guild_id].discard(user_id)
-                status_embed = discord.Embed(
-                    title=f"Unverified {user.display_name} Successfully",
-                    description="User will not be ignored by the moderation anymore.",
-                    colour=discord.Color.green()
-                )
+        if is_verified:
+            await self.bot.db.execute_write(
+                'DELETE FROM verified WHERE guild_id = ? AND user_id = ?',
+                (guild_id, user_id),
+            )
+            self.verifiedcache[guild_id].discard(user_id)
+            status_embed = discord.Embed(
+                title=f"Unverified {user.display_name} Successfully",
+                description="User will not be ignored by the moderation anymore.",
+                colour=discord.Color.green()
+            )
+        else:
+            await self.bot.db.execute_write(
+                'INSERT OR IGNORE INTO verified (guild_id, user_id) VALUES (?, ?)',
+                (guild_id, user_id),
+            )
+            self.verifiedcache.setdefault(guild_id, set()).add(user_id)
+            status_embed = discord.Embed(
+                title=f"Verified {user.display_name} Successfully",
+                description="User will now be ignored by the moderation.",
+                colour=discord.Color.green()
+            )
 
-            else:
-                await db.execute('INSERT OR IGNORE INTO verified (guild_id, user_id) VALUES (?, ?)',
-                                 (guild_id, user_id),
-                                 )
-                self.verifiedcache.setdefault(guild_id, set()).add(user_id)
-                status_embed = discord.Embed(
-                    title=f"Verified {user.display_name} Successfully",
-                    description="User will now be ignored by the moderation.",
-                    colour=discord.Color.green()
-                )
-            await db.commit()
         await self.log_verify(user, interaction.user, new_status)
         await interaction.response.send_message(embed=status_embed, ephemeral=True)
 
@@ -446,16 +432,16 @@ class Nickname(commands.Cog):
         guild_id = interaction.guild.id
 
         if guild_id not in self.serversettingscache:
-            async with self.acquire_db() as db:
-                await db.execute('INSERT OR IGNORE INTO serversettings (guild_id) VALUES (?)', (guild_id,))
-                await db.commit()
+            await self.bot.db.execute_write(
+                'INSERT OR IGNORE INTO serversettings (guild_id) VALUES (?)',
+                (guild_id,)
+            )
             self.serversettingscache[guild_id] = {
                 "symbol_filter": 0,
                 "profanity_filter": 0,
                 "placeholder": "Change your nickname",
                 "last_scan": 0
             }
-
 
         settings = self.serversettingscache.get(guild_id, {})
         placeholder = settings.get("placeholder", "Change your nickname")
@@ -519,7 +505,7 @@ class Nickname(commands.Cog):
         if not new_words:
             return await ctx.send("No words detected. Format: `word1, word2, word3`")
 
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             await db.executemany(
                 'INSERT OR IGNORE INTO profanity (word) VALUES (?)',
                 [(word,) for word in new_words]
@@ -550,12 +536,10 @@ class Nickname(commands.Cog):
                 color=discord.Color.red()
             ))
 
-        async with self.acquire_db() as db:
-            await db.execute(
-                'UPDATE serversettings SET last_scan = ? WHERE guild_id = ?',
-                (now, guild_id)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            'UPDATE serversettings SET last_scan = ? WHERE guild_id = ?',
+            (now, guild_id)
+        )
 
         if guild_id in self.serversettingscache:
             self.serversettingscache[guild_id]["last_scan"] = now
@@ -593,7 +577,7 @@ class Nickname(commands.Cog):
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="nickname")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             if guild_ids is None:
                 rows = await export_table(
                     db, "SELECT guild_id, user_id FROM verified WHERE user_id = ?", (user_id,))
@@ -611,7 +595,7 @@ class Nickname(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="nickname")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             settings = await export_table(
                 db,
                 "SELECT guild_id, symbol_filter, profanity_filter, placeholder, last_scan FROM serversettings WHERE guild_id = ?",
@@ -629,7 +613,7 @@ class Nickname(commands.Cog):
         if feature_id and feature_id != "nickname":
             return DataDeleteResult(feature_id="nickname")
         rows_affected = 0
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             if guild_ids is None:
                 cur = await db.execute("DELETE FROM verified WHERE user_id = ?", (user_id,))
             else:
@@ -653,7 +637,7 @@ class Nickname(commands.Cog):
         if feature_id and feature_id != "nickname":
             return DataDeleteResult(feature_id="nickname")
         rows_affected = 0
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             cur = await db.execute("DELETE FROM verified WHERE guild_id = ?", (guild_id,))
             rows_affected += cur.rowcount
             cur = await db.execute("DELETE FROM serversettings WHERE guild_id = ?", (guild_id,))

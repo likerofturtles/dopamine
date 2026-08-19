@@ -523,7 +523,7 @@ class StarboardCog(commands.Cog):
         content_str = f"⭐️ {count} in {ref.channel.mention}"
 
         channel = self.bot.get_channel(sb_id) or await self.bot.fetch_channel(sb_id)
-        channel.send(content=content_str, embed=embed)
+        await channel.send(content=content_str, embed=embed)
 
     def data_features(self) -> list[DataFeatureMeta]:
         return [DataFeatureMeta(

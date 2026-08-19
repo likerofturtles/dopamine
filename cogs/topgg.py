@@ -48,7 +48,7 @@ class TopGGVoter(commands.Cog):
         now = datetime.now()
 
         if has_voted:
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 """
                 INSERT INTO voters (user_id, voted_at, last_checked)
                 VALUES (?, ?, ?)
@@ -60,7 +60,7 @@ class TopGGVoter(commands.Cog):
             )
             self.voter_cache[user_id] = {"voted_at": now, "last_checked": now}
         else:
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 """
                 INSERT INTO voters (user_id, last_checked)
                 VALUES (?, ?)
@@ -123,7 +123,7 @@ class TopGGVoter(commands.Cog):
 
     async def cleanup_old_voters(self, max_age_days: int = 15):
         cutoff_date = datetime.now() - timedelta(days=max_age_days)
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "DELETE FROM voters WHERE voted_at < ? AND last_checked < ?",
             (cutoff_date.isoformat(), cutoff_date.isoformat())
         )

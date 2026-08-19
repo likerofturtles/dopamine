@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 import aiohttp
 import discord
@@ -8,17 +11,19 @@ from config import DBL_TOKEN
 from config import OVERRIDE_VOTEWALL
 
 logger = logging.getLogger("discord")
+
+
 class DBLCommands(commands.Cog):
 
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.dbl_token = DBL_TOKEN
+    def __init__(self, bot: commands.Bot) -> None:
+        self.bot: commands.Bot = bot
+        self.dbl_token: str | None = DBL_TOKEN
         self.update_dbl_commands.start()
 
-    def cog_unload(self):
+    def cog_unload(self) -> None:
         self.update_dbl_commands.cancel()
 
-    def format_command(self, command):
+    def format_command(self, command: discord.app_commands.Command | discord.app_commands.Group) -> dict[str, Any]:
         cmd_type = getattr(command, 'type', discord.AppCommandType.chat_input)
 
         type_value = cmd_type.value if hasattr(cmd_type, 'value') else 1
@@ -41,7 +46,7 @@ class DBLCommands(commands.Cog):
         return data
 
     @tasks.loop(hours=24)
-    async def update_dbl_commands(self):
+    async def update_dbl_commands(self) -> None:
         if not OVERRIDE_VOTEWALL:
             await self.bot.wait_until_ready()
 
@@ -49,7 +54,9 @@ class DBLCommands(commands.Cog):
 
             payload = [self.format_command(cmd) for cmd in all_commands]
 
-            url = f"https://discordbotlist.com/api/v1/bots/{self.bot.user.id}/commands"
+            url = f"https://discordbotlist.com/api/v1/bots/{self.bot.user.id}/commands" if self.bot.user else ""
+            if not url:
+                return
             headers = {
                 "Authorization": f"Bot {self.dbl_token}",
                 "Content-Type": "application/json"
@@ -65,9 +72,9 @@ class DBLCommands(commands.Cog):
                     logger.error(f"Error posting to DBL: {e}")
 
     @update_dbl_commands.before_loop
-    async def before_update(self):
+    async def before_update(self) -> None:
         await self.bot.wait_until_ready()
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(DBLCommands(bot))

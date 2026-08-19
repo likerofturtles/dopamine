@@ -3,7 +3,6 @@ import time
 from datetime import timedelta
 from typing import Dict, Optional, List, Any, Union
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord import app_commands
@@ -394,20 +393,17 @@ class ActionModal(discord.ui.Modal):
                 if not view.value:
                     return
 
-            async with self.cog.bot.db.acquire_db() as db:
-                await db.execute(
+            if self.is_create:
+                await self.cog.bot.db.execute_write(
                     "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
                     (self.guild_id, act_type, dur_seconds, points_val)
                 )
-                await db.commit()
 
-        else:
-            async with self.cog.bot.db.acquire_db() as db:
-                await db.execute(
+            else:
+                await self.cog.bot.db.execute_write(
                     "UPDATE actions SET points = ? WHERE id = ? AND guild_id = ?",
                     (points_val, self.existing_action_id, self.guild_id)
                 )
-                await db.commit()
 
         await self.cog.refresh_action_cache(self.guild_id)
 
@@ -465,12 +461,10 @@ class SettingValueModal(discord.ui.Modal):
                                                                    ephemeral=True)
 
         guild_id = interaction.guild.id
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute(
-                f"UPDATE settings SET {self.setting_key} = ? WHERE guild_id = ?",
-                (final_val, guild_id)
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            f"UPDATE moderation_settings SET {self.setting_key} = ? WHERE guild_id = ?",
+            (final_val, guild_id)
+        )
 
         if guild_id in self.cog.settings_cache:
             self.cog.settings_cache[guild_id][self.setting_key] = final_val
@@ -556,9 +550,7 @@ class MessageReportDashboard(PrivateLayoutView):
         channel_id = settings.get("msg_report_channel")
         roles_raw = settings.get("msg_report_roles")
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute("UPDATE settings SET msg_report_enabled = ? WHERE guild_id = ?", (new_state, guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_enabled = ? WHERE guild_id = ?", (new_state, guild_id))
         self.cog.settings_cache[guild_id]["msg_report_enabled"] = new_state
 
         if new_state == 1:
@@ -624,9 +616,7 @@ class ChannelSelect(PrivateLayoutView):
         guild_id = interaction.guild.id
         channel_id = interaction.data['values'][0]
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute("UPDATE settings SET msg_report_channel = ? WHERE guild_id = ?", (channel_id, guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_channel = ? WHERE guild_id = ?", (channel_id, guild_id))
 
         self.cog.settings_cache[guild_id]["msg_report_channel"] = int(channel_id)
 
@@ -669,9 +659,7 @@ class RoleSelect(PrivateLayoutView):
         guild_id = interaction.guild.id
         roles = ",".join(interaction.data['values'])
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute("UPDATE settings SET msg_report_roles = ? WHERE guild_id = ?", (roles, guild_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_roles = ? WHERE guild_id = ?", (roles, guild_id))
 
         self.cog.settings_cache[guild_id]["msg_report_roles"] = roles
         await interaction.response.edit_message(view=MessageReportDashboard(self.user, self.cog))
@@ -936,10 +924,8 @@ class SettingsPage(PrivateLayoutView):
 
     def make_toggle_callback(self, key, new_val):
         async def callback(interaction: discord.Interaction):
-            async with self.cog.bot.db.acquire_db() as db:
-                await db.execute(f"UPDATE settings SET {key} = ? WHERE guild_id = ?",
-                                 (1 if new_val else 0, interaction.guild.id))
-                await db.commit()
+            await self.cog.bot.db.execute_write(f"UPDATE moderation_settings SET {key} = ? WHERE guild_id = ?",
+                             (1 if new_val else 0, interaction.guild.id))
             self.cog.settings_cache[interaction.guild.id][key] = 1 if new_val else 0
             await interaction.response.edit_message(view=SettingsPage(self.user, self.cog))
 
@@ -960,11 +946,11 @@ class SettingsPage(PrivateLayoutView):
                     await db.executemany(
                         "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
                         [(interaction.guild.id, a, d, p) for a, d, p in preset])
-                    await db.execute("UPDATE settings SET simple_mode = 1 WHERE guild_id = ?", (interaction.guild.id,))
+                    await db.execute("UPDATE moderation_settings SET simple_mode = 1 WHERE guild_id = ?", (interaction.guild.id,))
                     await db.commit()
             else:
                 async with self.cog.bot.db.acquire_db() as db:
-                    await db.execute("UPDATE settings SET simple_mode = 0 WHERE guild_id = ?", (interaction.guild.id,))
+                    await db.execute("UPDATE moderation_settings SET simple_mode = 0 WHERE guild_id = ?", (interaction.guild.id,))
                     await db.commit()
 
             self.cog.settings_cache[interaction.guild.id]["simple_mode"] = 1 if new_val else 0
@@ -1089,9 +1075,7 @@ class CustomisationPage(PrivateLayoutView):
                 if total_actions <= 1:
                     return await interaction.response.send_message("You must keep at least one action.", ephemeral=True)
 
-                async with self.cog.bot.db.acquire_db() as db:
-                    await db.execute("DELETE FROM actions WHERE id = ?", (action['id'],))
-                    await db.commit()
+                await self.cog.bot.db.execute_write("DELETE FROM actions WHERE id = ?", (action['id'],))
                 await self.cog.refresh_action_cache(interaction.guild.id)
                 all_actions = self.cog.action_cache.get(interaction.guild.id, [])
                 max_pages = (len(all_actions) + self.items_per_page - 1) // self.items_per_page
@@ -1951,64 +1935,55 @@ class Moderation(commands.Cog):
             "created_at": row[10],
         }
 
-    async def next_case_number(self, guild_id: int, db: aiosqlite.Connection) -> int:
-        async with db.execute(
-                "SELECT COALESCE(MAX(case_number), 0) + 1 FROM infractions WHERE guild_id = ?",
-                (guild_id,)
-        ) as cursor:
-            row = cursor.fetchone()
-            return row[0]
+    async def next_case_number(self, guild_id: int) -> int:
+        rows = await self.bot.db.execute(
+            "SELECT COALESCE(MAX(case_number), 0) + 1 AS next_num FROM infractions WHERE guild_id = ?",
+            (guild_id,)
+        )
+        return rows[0]["next_num"] if rows else 1
 
     async def record_infraction(
             self, guild_id: int, user_id: int, moderator_id: int, amount: int, reason: Optional[str],
             punishment_type: Optional[str], punishment_duration: int, points_after: int, created_at: int
     ) -> int:
-        async with self.bot.db.acquire_db() as db:
-            case_number = await self.next_case_number(guild_id, db)
-            await db.execute(
-                '''INSERT INTO infractions
-                   (guild_id, case_number, user_id, moderator_id, amount, reason,
-                    punishment_type, punishment_duration, points_after, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (guild_id, case_number, user_id, moderator_id, amount, reason,
-                 punishment_type, punishment_duration, points_after, created_at)
-            )
-            await db.commit()
-            return case_number
+        case_number = await self.next_case_number(guild_id)
+        await self.bot.db.execute_write(
+            '''INSERT INTO infractions
+               (guild_id, case_number, user_id, moderator_id, amount, reason,
+                punishment_type, punishment_duration, points_after, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (guild_id, case_number, user_id, moderator_id, amount, reason,
+             punishment_type, punishment_duration, points_after, created_at)
+        )
+        return case_number
 
     async def get_user_infractions(self, guild_id: int, user_id: int) -> List[dict]:
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    '''SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason,
-                              punishment_type, punishment_duration, points_after, created_at
-                       FROM infractions
-                       WHERE guild_id = ? AND user_id = ?
-                       ORDER BY created_at DESC''',
-                    (guild_id, user_id)
-            ) as cursor:
-                return [self._row_to_infraction(row) async for row in cursor]
+        return await self.bot.db.execute(
+            '''SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason,
+                      punishment_type, punishment_duration, points_after, created_at
+               FROM infractions
+               WHERE guild_id = ? AND user_id = ?
+               ORDER BY created_at DESC''',
+            (guild_id, user_id)
+        )
 
     async def get_all_infractions(self, guild_id: int) -> List[dict]:
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason, "
-                    "punishment_type, punishment_duration, points_after, created_at "
-                    "FROM infractions WHERE guild_id = ? ORDER BY created_at DESC",
-                    (guild_id,)
-            ) as cursor:
-                return [self._row_to_infraction(row) async for row in cursor]
+        return await self.bot.db.execute(
+            "SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason, "
+            "punishment_type, punishment_duration, points_after, created_at "
+            "FROM infractions WHERE guild_id = ? ORDER BY created_at DESC",
+            (guild_id,)
+        )
 
     async def get_infraction(self, guild_id: int, case_number: int) -> Optional[dict]:
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    '''SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason,
-                              punishment_type, punishment_duration, points_after, created_at
-                       FROM infractions
-                       WHERE guild_id = ? AND case_number = ?''',
-                    (guild_id, case_number)
-            ) as cursor:
-                row = cursor.fetchone()
-                return self._row_to_infraction(row) if row else None
+        rows = await self.bot.db.execute(
+            '''SELECT id, guild_id, case_number, user_id, moderator_id, amount, reason,
+                      punishment_type, punishment_duration, points_after, created_at
+               FROM infractions
+               WHERE guild_id = ? AND case_number = ?''',
+            (guild_id, case_number)
+        )
+        return rows[0] if rows else None
 
     async def get_guild_active_users(self, guild_id: int) -> List[dict]:
         entries = []
@@ -2026,20 +2001,19 @@ class Moderation(commands.Cog):
                 "last_decay": data["last_decay"],
             })
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT user_id, points, last_punishment, last_decay FROM moderation_users WHERE guild_id = ? AND points > 0",
-                    (guild_id,)
-            ) as cursor:
-                async for row in cursor:
-                    if row[0] in seen:
-                        continue
-                    entries.append({
-                        "user_id": row[0],
-                        "points": row[1],
-                        "last_punishment": row[2],
-                        "last_decay": row[3],
-                    })
+        rows = await self.bot.db.execute(
+            "SELECT user_id, points, last_punishment, last_decay FROM moderation_users WHERE guild_id = ? AND points > 0",
+            (guild_id,)
+        )
+        for row in rows:
+            if row["user_id"] in seen:
+                continue
+            entries.append({
+                "user_id": row["user_id"],
+                "points": row["points"],
+                "last_punishment": row["last_punishment"],
+                "last_decay": row["last_decay"],
+            })
         return entries
 
     def register_live_case_view(self, message_id: int, view: AllActiveInfractionsPage):
@@ -2083,22 +2057,18 @@ class Moderation(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def delete_infraction(self, guild_id: int, case_number: int) -> bool:
-        async with self.bot.db.acquire_db() as db:
-            cursor = await db.execute(
-                "DELETE FROM infractions WHERE guild_id = ? AND case_number = ?",
-                (guild_id, case_number)
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+        rowcount = await self.bot.db.execute_write(
+            "DELETE FROM infractions WHERE guild_id = ? AND case_number = ?",
+            (guild_id, case_number)
+        )
+        return rowcount > 0
 
     async def sync_last_punishment_from_cases(self, guild_id: int, user_id: int):
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT MAX(created_at) FROM infractions WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-            ) as cursor:
-                row = cursor.fetchone()
-                last_ts = row[0] if row and row[0] else None
+        rows = await self.bot.db.execute(
+            "SELECT MAX(created_at) AS max_ts FROM infractions WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id)
+        )
+        last_ts = rows[0]["max_ts"] if rows and rows[0]["max_ts"] else None
 
         key = f"{guild_id}:{user_id}"
         data = await self.get_user_data(guild_id, user_id)
@@ -2107,13 +2077,11 @@ class Moderation(commands.Cog):
             data["last_decay"] = None
         self.user_cache[key] = data
 
-        async with self.bot.db.acquire_db() as db:
-            await db.execute(
-                '''UPDATE moderation_users SET last_punishment = ?, last_decay = ?
-                   WHERE guild_id = ? AND user_id = ?''',
-                (last_ts, data["last_decay"], guild_id, user_id)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            '''UPDATE moderation_users SET last_punishment = ?, last_decay = ?
+               WHERE guild_id = ? AND user_id = ?''',
+            (last_ts, data["last_decay"], guild_id, user_id)
+        )
 
     async def execute_case_delete(self, interaction: discord.Interaction, guild: discord.Guild,
                                   case: dict, reverse: bool):
@@ -2152,12 +2120,10 @@ class Moderation(commands.Cog):
                         discord.Object(id=user_id),
                         reason=f"Case #{case['case_number']} deleted by {interaction.user.display_name}"
                     )
-                    async with self.bot.db.acquire_db() as db:
-                        await db.execute(
-                            "DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
-                            (guild_id, user_id)
-                        )
-                        await db.commit()
+                    await self.bot.db.execute_write(
+                        "DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
+                        (guild_id, user_id)
+                    )
                     reversal_notes.append("User unbanned")
                 except discord.NotFound:
                     reversal_notes.append("User was not banned")
@@ -2223,51 +2189,48 @@ class Moderation(commands.Cog):
         self.action_cache.clear()
         self.settings_cache.clear()
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM moderation_users") as cursor:
-                async for row in cursor:
-                    self.user_cache[f"{row[0]}:{row[1]}"] = {
-                        "points": row[2],
-                        "last_punishment": row[3],
-                        "last_decay": row[4],
-                        "total_decayed": row[5]
-                    }
+        rows = await self.bot.db.execute("SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM moderation_users")
+        for row in rows:
+            self.user_cache[f"{row['guild_id']}:{row['user_id']}"] = {
+                "points": row["points"],
+                "last_punishment": row["last_punishment"],
+                "last_decay": row["last_decay"],
+                "total_decayed": row["total_decayed"]
+            }
 
-            async with db.execute("SELECT * FROM actions") as cursor:
-                async for row in cursor:
-                    guild_id = row[1]
-                    action = {
-                        "id": row[0],
-                        "guild_id": row[1],
-                        "action_type": row[2],
-                        "duration": row[3],
-                        "points": row[4]
-                    }
-                    if guild_id not in self.action_cache:
-                        self.action_cache[guild_id] = []
-                    self.action_cache[guild_id].append(action)
+        rows = await self.bot.db.execute("SELECT id, guild_id, action_type, duration, points FROM actions")
+        for row in rows:
+            guild_id = row["guild_id"]
+            action = {
+                "id": row["id"],
+                "guild_id": row["guild_id"],
+                "action_type": row["action_type"],
+                "duration": row["duration"],
+                "points": row["points"]
+            }
+            if guild_id not in self.action_cache:
+                self.action_cache[guild_id] = []
+            self.action_cache[guild_id].append(action)
 
-            async with db.execute(
-                    "SELECT guild_id, punishment_dm, punishment_log, decay_interval, rejoin_points, simple_mode, msg_report_enabled, msg_report_channel, msg_report_roles, decay_log_enabled, show_medals FROM settings") as cursor:
-                async for row in cursor:
-                    self.settings_cache[row[0]] = {
-                        "punishment_dm": row[1],
-                        "punishment_log": row[2],
-                        "decay_interval": row[3],
-                        "rejoin_points": row[4],
-                        "simple_mode": row[5],
-                        "msg_report_enabled": row[6],
-                        "msg_report_channel": row[7],
-                        "msg_report_roles": row[8],
-                        "decay_log_enabled": row[9],
-                        "show_medals": row[10]
-                    }
+        rows = await self.bot.db.execute(
+            "SELECT guild_id, punishment_dm, punishment_log, decay_interval, rejoin_points, simple_mode, msg_report_enabled, msg_report_channel, msg_report_roles, decay_log_enabled, show_medals FROM moderation_settings")
+        for row in rows:
+            self.settings_cache[row["guild_id"]] = {
+                "punishment_dm": row["punishment_dm"],
+                "punishment_log": row["punishment_log"],
+                "decay_interval": row["decay_interval"],
+                "rejoin_points": row["rejoin_points"],
+                "simple_mode": row["simple_mode"],
+                "msg_report_enabled": row["msg_report_enabled"],
+                "msg_report_channel": row["msg_report_channel"],
+                "msg_report_roles": row["msg_report_roles"],
+                "decay_log_enabled": row["decay_log_enabled"],
+                "show_medals": row["show_medals"]
+            }
 
     async def guild_setup(self, interaction: discord.Interaction):
         if interaction.guild.id not in self.settings_cache:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute("INSERT OR IGNORE INTO settings (guild_id) VALUES (?)", (interaction.guild.id,))
-                await db.commit()
+            await self.bot.db.execute_write("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)", (interaction.guild.id,))
 
             self.settings_cache[interaction.guild.id] = {
                 "punishment_dm": 1, "punishment_log": 1, "simple_mode": 1,
@@ -2287,46 +2250,42 @@ class Moderation(commands.Cog):
             ("ban", 0, 5)
         ]
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT 1 FROM actions WHERE guild_id = ? LIMIT 1", (guild_id,)) as cursor:
-                if not cursor.fetchone():
-                    await db.executemany(
-                        "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
-                        [(guild_id, a, d, p) for a, d, p in default_actions]
-                    )
-                    await db.commit()
-                    await self.refresh_action_cache(guild_id)
+        rows = await self.bot.db.execute("SELECT 1 FROM actions WHERE guild_id = ? LIMIT 1", (guild_id,))
+        if not rows:
+            for a, d, p in default_actions:
+                await self.bot.db.execute_write(
+                    "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
+                    (guild_id, a, d, p)
+                )
+            await self.refresh_action_cache(guild_id)
 
 
     async def refresh_action_cache(self, guild_id: int):
         if guild_id in self.action_cache:
             self.action_cache[guild_id] = []
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT * FROM actions WHERE guild_id = ?", (guild_id,)) as cursor:
-                async for row in cursor:
-                    action = {
-                        "id": row[0],
-                        "guild_id": row[1],
-                        "action_type": row[2],
-                        "duration": row[3],
-                        "points": row[4]
-                    }
-                    if guild_id not in self.action_cache:
-                        self.action_cache[guild_id] = []
-                    self.action_cache[guild_id].append(action)
+        rows = await self.bot.db.execute("SELECT id, guild_id, action_type, duration, points FROM actions WHERE guild_id = ?", (guild_id,))
+        for row in rows:
+            action = {
+                "id": row["id"],
+                "guild_id": row["guild_id"],
+                "action_type": row["action_type"],
+                "duration": row["duration"],
+                "points": row["points"]
+            }
+            if guild_id not in self.action_cache:
+                self.action_cache[guild_id] = []
+            self.action_cache[guild_id].append(action)
 
     async def get_user_data(self, guild_id: int, user_id: int) -> dict:
         key = f"{guild_id}:{user_id}"
         if key not in self.user_cache:
             data = {"points": 0, "last_punishment": None, "last_decay": None, "total_decayed": 0}
             self.user_cache[key] = data
-            async with self.bot.db.acquire_db() as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO moderation_users (guild_id, user_id, points, total_decayed) VALUES (?, ?, ?, ?)",
-                    (guild_id, user_id, 0, 0)
-                )
-                await db.commit()
+            await self.bot.db.execute_write(
+                "INSERT OR IGNORE INTO moderation_users (guild_id, user_id, points, total_decayed) VALUES (?, ?, ?, ?)",
+                (guild_id, user_id, 0, 0)
+            )
         return self.user_cache[key]
 
     async def update_user_points(self, guild_id: int, user_id: int, points: int, punishment_ts: Optional[int] = None, total_decayed: Optional[int] = None):
@@ -2341,17 +2300,15 @@ class Moderation(commands.Cog):
 
         self.user_cache[key] = data
 
-        async with self.bot.db.acquire_db() as db:
-            await db.execute('''
-                             UPDATE moderation_users
-                             SET points          = ?,
-                                 last_punishment = ?,
-                                 last_decay      = ?,
-                                 total_decayed   = ?
-                             WHERE guild_id = ?
-                               AND user_id = ?
-                             ''', (points, data["last_punishment"], data["last_decay"], data.get("total_decayed", 0), guild_id, user_id))
-            await db.commit()
+        await self.bot.db.execute_write('''
+                         UPDATE moderation_users
+                         SET points          = ?,
+                             last_punishment = ?,
+                             last_decay      = ?,
+                             total_decayed   = ?
+                         WHERE guild_id = ?
+                           AND user_id = ?
+                         ''', (points, data["last_punishment"], data["last_decay"], data.get("total_decayed", 0), guild_id, user_id))
 
         await self.refresh_live_case_views(guild_id)
 
@@ -2475,12 +2432,10 @@ class Moderation(commands.Cog):
                 await interaction.guild.ban(member, reason=reason_text, delete_message_days=delete_days)
                 if duration:
                     unban_ts = int((discord.utils.utcnow() + duration).timestamp())
-                    async with self.bot.db.acquire_db() as db:
-                        await db.execute(
-                            "INSERT OR REPLACE INTO ban_schedule (guild_id, user_id, unban_at) VALUES (?, ?, ?)",
-                            (interaction.guild.id, member.id, unban_ts)
-                        )
-                        await db.commit()
+                    await self.bot.db.execute_write(
+                        "INSERT OR REPLACE INTO ban_schedule (guild_id, user_id, unban_at) VALUES (?, ?, ?)",
+                        (interaction.guild.id, member.id, unban_ts)
+                    )
         except discord.Forbidden:
             errors.append("Punishment failed (Missing Permissions)")
         except Exception as e:
@@ -2616,13 +2571,11 @@ class Moderation(commands.Cog):
         ]
 
     async def is_user_pending(self, guild_id: int, user_id: int) -> bool:
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT 1 FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
-                    (guild_id, user_id)
-            ) as cursor:
-                row = cursor.fetchone()
-                return row is not None
+        rows = await self.bot.db.execute(
+            "SELECT 1 FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id)
+        )
+        return len(rows) > 0
 
     mod_group = beacon_commands.Group(name="moderation", description="Moderation system settings", permissions_preset="moderator")
 
@@ -2630,9 +2583,7 @@ class Moderation(commands.Cog):
     async def moderation_dashboard(self, interaction: discord.Interaction):
         await self.guild_setup(interaction)
         if interaction.guild.id not in self.settings_cache:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute("INSERT OR IGNORE INTO settings (guild_id) VALUES (?)", (interaction.guild.id,))
-                await db.commit()
+            await self.bot.db.execute_write("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)", (interaction.guild.id,))
             self.settings_cache[interaction.guild.id] = {"punishment_dm": 1, "punishment_log": 1, "simple_mode": 0,
                                                          "decay_interval": 14, "rejoin_points": 4}
         await self.apply_default_actions(interaction.guild.id)
@@ -2711,14 +2662,14 @@ class Moderation(commands.Cog):
 
         await interaction.response.defer()
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT id FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
-                    (interaction.guild.id, member.id)) as cursor:
-                pending_entry = cursor.fetchone()
+        rows = await self.bot.db.execute(
+            "SELECT id FROM pending_punishments WHERE guild_id = ? AND user_id = ?",
+            (interaction.guild.id, member.id)
+        )
+        pending_entry = rows[0] if rows else None
 
         if pending_entry:
-            pending_id = pending_entry[0]
+            pending_id = pending_entry["id"]
             try:
                 await member.timeout(None, reason="Pending punishment resolved by formal infraction.")
             except discord.Forbidden:
@@ -2726,8 +2677,7 @@ class Moderation(commands.Cog):
             except Exception as e:
                 self.bot.logger.error(f"Error removing timeout for {member.id}: {e}")
 
-            await db.execute("DELETE FROM pending_punishments WHERE id = ?", (pending_id,))
-            await db.commit()
+            await self.bot.db.execute_write("DELETE FROM pending_punishments WHERE id = ?", (pending_id,))
 
         all_errors = []
 
@@ -2825,10 +2775,8 @@ class Moderation(commands.Cog):
         try:
             await interaction.guild.unban(user, reason=f"Unbanned by {interaction.user.display_name}: {reason}")
 
-            async with self.bot.db.acquire_db() as db:
-                await db.execute("DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
-                                 (interaction.guild.id, user.id))
-                await db.commit()
+            await self.bot.db.execute_write("DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
+                             (interaction.guild.id, user.id))
 
             settings = self.settings_cache.get(interaction.guild.id, {})
             rejoin_pts = settings.get("rejoin_points", 4)
@@ -3037,30 +2985,25 @@ class Moderation(commands.Cog):
                 "I lack permissions to send messages to the configured reporting channel.", ephemeral=True)
 
     async def get_pending_punishments(self, guild_id: int) -> list:
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT id, user_id, moderator_id, reason, created_at, timeout_until FROM pending_punishments WHERE guild_id = ? ORDER BY created_at DESC",
-                    (guild_id,)
-            ) as cursor:
-                rows = cursor.fetchall()
-                return [{"id": row[0], "user_id": row[1], "moderator_id": row[2], "reason": row[3], "created_at": row[4], "timeout_until": row[5]} for row in rows]
+        rows = await self.bot.db.execute(
+            "SELECT id, user_id, moderator_id, reason, created_at, timeout_until FROM pending_punishments WHERE guild_id = ? ORDER BY created_at DESC",
+            (guild_id,)
+        )
+        return [{"id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"], "reason": row["reason"], "created_at": row["created_at"], "timeout_until": row["timeout_until"]} for row in rows]
 
     async def add_pending_punishment(self, guild_id: int, user_id: int, moderator_id: int, reason: str, created_at: int, timeout_until: int) -> int:
-        async with self.bot.db.acquire_db() as db:
-            cursor = await db.execute(
-                "INSERT INTO pending_punishments (guild_id, user_id, moderator_id, reason, created_at, timeout_until) VALUES (?, ?, ?, ?, ?, ?)",
-                (guild_id, user_id, moderator_id, reason, created_at, timeout_until)
-            )
-            await db.commit()
-            return cursor.lastrowid
+        await self.bot.db.execute_write(
+            "INSERT INTO pending_punishments (guild_id, user_id, moderator_id, reason, created_at, timeout_until) VALUES (?, ?, ?, ?, ?, ?)",
+            (guild_id, user_id, moderator_id, reason, created_at, timeout_until)
+        )
+        id_rows = await self.bot.db.execute("SELECT last_insert_rowid() AS id")
+        return int(id_rows[0]["id"]) if id_rows else 0
 
     async def remove_pending_punishment(self, guild_id: int, pending_id: int):
-        async with self.bot.db.acquire_db() as db:
-            await db.execute(
-                "DELETE FROM pending_punishments WHERE guild_id = ? AND id = ?",
-                (guild_id, pending_id)
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "DELETE FROM pending_punishments WHERE guild_id = ? AND id = ?",
+            (guild_id, pending_id)
+        )
 
     @beacon_commands.command(name="pending", description="Put a user on a 7-day timeout and add to pending punishments list.", permissions_preset="moderator")
     @app_commands.describe(member="The user to put on pending punishment", reason="The reason for the pending punishment")
@@ -3166,7 +3109,7 @@ class Moderation(commands.Cog):
             actions = await export_table(db, "SELECT * FROM actions WHERE guild_id = ?", (guild_id,))
             ban_schedule = await export_table(
                 db, "SELECT * FROM ban_schedule WHERE guild_id = ?", (guild_id,))
-            settings = await export_table(db, "SELECT * FROM settings WHERE guild_id = ?", (guild_id,))
+            settings = await export_table(db, "SELECT * FROM moderation_settings WHERE guild_id = ?", (guild_id,))
             infractions = await export_table(
                 db, "SELECT * FROM infractions WHERE guild_id = ?", (guild_id,))
             pending = await export_table(
@@ -3195,7 +3138,7 @@ class Moderation(commands.Cog):
             return DataDeleteResult(feature_id="moderation")
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
-            for table in ("pending_punishments", "infractions", "ban_schedule", "users", "actions", "settings"):
+            for table in ("pending_punishments", "infractions", "ban_schedule", "moderation_users", "actions", "moderation_settings"):
                 cur = await db.execute(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,))
                 rows_affected += cur.rowcount
             await db.commit()
@@ -3228,10 +3171,8 @@ class Moderation(commands.Cog):
             and channel.permissions_for(guild.me).send_messages
         )
         if not accessible:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute(
-                    "UPDATE settings SET msg_report_enabled = 0 WHERE guild_id = ?", (guild.id,))
-                await db.commit()
+            await self.bot.db.execute_write(
+                "UPDATE moderation_settings SET msg_report_enabled = 0 WHERE guild_id = ?", (guild.id,))
             settings["msg_report_enabled"] = 0
             result.actions.append("disabled_msg_report")
         return result

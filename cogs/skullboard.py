@@ -183,7 +183,7 @@ class SkullboardCog(commands.Cog):
         self.settings_cache.clear()
         self.skull_posts_cache.clear()
 
-        rows = await self.bot.db.execute("SELECT * FROM guild_settings")
+        rows = await self.bot.db.execute("SELECT * FROM skullboard_guild_settings")
         for data in rows:
             self.settings_cache[data["guild_id"]] = data
 
@@ -202,11 +202,11 @@ class SkullboardCog(commands.Cog):
             return self.settings_cache[guild_id]
 
         await self.bot.db.execute_write(
-            "INSERT OR IGNORE INTO guild_settings (guild_id, enabled) VALUES (?, 0)",
+            "INSERT OR IGNORE INTO skullboard_guild_settings (guild_id, enabled) VALUES (?, 0)",
             (guild_id,)
         )
 
-        rows = await self.bot.db.execute("SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
+        rows = await self.bot.db.execute("SELECT * FROM skullboard_guild_settings WHERE guild_id = ?", (guild_id,))
         if rows:
             data = rows[0]
             self.settings_cache[guild_id] = data
@@ -224,7 +224,7 @@ class SkullboardCog(commands.Cog):
         set_clause = ", ".join(f"{key} = ?" for key in kwargs.keys())
         values = list(kwargs.values()) + [guild_id]
 
-        await self.bot.db.execute_write(f"UPDATE guild_settings SET {set_clause} WHERE guild_id = ?", values)
+        await self.bot.db.execute_write(f"UPDATE skullboard_guild_settings SET {set_clause} WHERE guild_id = ?", values)
 
     def get_skull_emoji(self, count: int) -> str:
         if count >= 15:
@@ -490,7 +490,7 @@ class SkullboardCog(commands.Cog):
         chunk = DataExportChunk(feature_id="skullboard")
         async with self.bot.db.acquire_db() as db:
             settings = await export_table(
-                db, "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,))
+                db, "SELECT * FROM skullboard_guild_settings WHERE guild_id = ?", (guild_id,))
             posts = await export_table(
                 db, "SELECT * FROM skull_posts WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"settings": settings, "skull_posts": posts}
@@ -504,10 +504,10 @@ class SkullboardCog(commands.Cog):
             return DataDeleteResult(feature_id="skullboard")
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
-            cur = await db.execute("DELETE FROM skull_posts WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            cur = await db.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
+            async with db.execute("DELETE FROM skull_posts WHERE guild_id = ?", (guild_id,)) as cur:
+                rows_affected += cur.rowcount
+            async with db.execute("DELETE FROM skullboard_guild_settings WHERE guild_id = ?", (guild_id,)) as cur:
+                rows_affected += cur.rowcount
             await db.commit()
         self.settings_cache.pop(guild_id, None)
         self.skull_posts_cache.pop(guild_id, None)

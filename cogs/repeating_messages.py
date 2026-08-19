@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import time
-from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 
 import discord
@@ -74,17 +73,15 @@ class CreateRepeatingMessageModal(Modal):
             "started_at": current_time
         }
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                """
-                INSERT INTO scheduled_messages
-                (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
-                 frequency_seconds, next_send_time, is_active, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(data.values()),
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            """
+            INSERT INTO scheduled_messages
+            (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
+             frequency_seconds, next_send_time, is_active, started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            tuple(data.values()),
+        )
 
         if guild_id not in self.cog.message_cache:
             self.cog.message_cache[guild_id] = {}
@@ -154,17 +151,15 @@ class CreateRepeatingEmbedModal(Modal):
             "started_at": current_time
         }
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                """
-                INSERT INTO scheduled_messages
-                (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
-                 frequency_seconds, next_send_time, is_active, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(data.values()),
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            """
+            INSERT INTO scheduled_messages
+            (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
+             frequency_seconds, next_send_time, is_active, started_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            tuple(data.values()),
+        )
 
         if guild_id not in self.cog.message_cache:
             self.cog.message_cache[guild_id] = {}
@@ -197,13 +192,11 @@ class EditMessageContentModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         new_content = self.content_input.value
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE scheduled_messages SET message_content = ?, response_type = ?, embed_content = NULL, embed_data = NULL "
-                "WHERE guild_id = ? AND message_id = ?",
-                (new_content, "text", self.guild_id, self.message_id)
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            "UPDATE scheduled_messages SET message_content = ?, response_type = ?, embed_content = NULL, embed_data = NULL "
+            "WHERE guild_id = ? AND message_id = ?",
+            (new_content, "text", self.guild_id, self.message_id)
+        )
 
         self.cog.message_cache[self.guild_id][self.message_id]["message_content"] = new_content
         self.cog.message_cache[self.guild_id][self.message_id]["response_type"] = "text"
@@ -244,12 +237,10 @@ class EditFrequencyModal(Modal):
         now = time.time()
         new_next = now + seconds
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE scheduled_messages SET frequency_seconds = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
-                (seconds, new_next, self.guild_id, self.message_id)
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            "UPDATE scheduled_messages SET frequency_seconds = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
+            (seconds, new_next, self.guild_id, self.message_id)
+        )
 
         self.cog.message_cache[self.guild_id][self.message_id]["frequency_seconds"] = seconds
         self.cog.message_cache[self.guild_id][self.message_id]["next_send_time"] = new_next
@@ -413,12 +404,10 @@ class ChannelSelectView(PrivateLayoutView):
     async def select_callback(self, interaction: discord.Interaction):
         channel = self.select.values[0]
 
-        async with self.cog.acquire_db() as db:
-            await db.execute(
-                "UPDATE scheduled_messages SET channel_id = ? WHERE guild_id = ? AND message_id = ?",
-                (channel.id, self.guild_id, self.message_id)
-            )
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            "UPDATE scheduled_messages SET channel_id = ? WHERE guild_id = ? AND message_id = ?",
+            (channel.id, self.guild_id, self.message_id)
+        )
 
         self.cog.message_cache[self.guild_id][self.message_id]["channel_id"] = channel.id
 
@@ -652,20 +641,18 @@ class EditPage(PrivateLayoutView):
         now = time.time()
         next_send = now + self.panel_data['frequency_seconds']
 
-        async with self.cog.acquire_db() as db:
-            if new_state == 1:
-                await db.execute(
-                    "UPDATE scheduled_messages SET is_active = 1, started_at = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
-                    (now, next_send, self.guild_id, m_id)
-                )
-                self.cog.message_cache[self.guild_id][m_id]["started_at"] = now
-                self.cog.message_cache[self.guild_id][m_id]["next_send_time"] = next_send
-            else:
-                await db.execute(
-                    "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
-                    (self.guild_id, m_id)
-                )
-            await db.commit()
+        if new_state == 1:
+            await self.cog.bot.db.execute_write(
+                "UPDATE scheduled_messages SET is_active = 1, started_at = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
+                (now, next_send, self.guild_id, m_id)
+            )
+            self.cog.message_cache[self.guild_id][m_id]["started_at"] = now
+            self.cog.message_cache[self.guild_id][m_id]["next_send_time"] = next_send
+        else:
+            await self.cog.bot.db.execute_write(
+                "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
+                (self.guild_id, m_id)
+            )
 
         self.cog.message_cache[self.guild_id][m_id]["is_active"] = new_state
         self.panel_data["is_active"] = new_state
@@ -691,13 +678,11 @@ class EditPage(PrivateLayoutView):
 
             async def on_pick(inter: discord.Interaction, content: Optional[str], embed_obj: discord.Embed):
                 raw_embed = json.dumps(embed_obj.to_dict(), ensure_ascii=False)
-                async with self.cog.acquire_db() as db:
-                    await db.execute(
-                        "UPDATE scheduled_messages SET response_type = ?, message_content = NULL, embed_content = ?, embed_data = ? "
-                        "WHERE guild_id = ? AND message_id = ?",
-                        ("embed", content or None, raw_embed, self.guild_id, self.panel_data["message_id"]),
-                    )
-                    await db.commit()
+                await self.cog.bot.db.execute_write(
+                    "UPDATE scheduled_messages SET response_type = ?, message_content = NULL, embed_content = ?, embed_data = ? "
+                    "WHERE guild_id = ? AND message_id = ?",
+                    ("embed", content or None, raw_embed, self.guild_id, self.panel_data["message_id"]),
+                )
                 cache_item = self.cog.message_cache[self.guild_id][self.panel_data["message_id"]]
                 cache_item["response_type"] = "embed"
                 cache_item["message_content"] = None
@@ -809,10 +794,10 @@ class DestructiveConfirmationView(PrivateLayoutView):
     async def confirm_callback(self, interaction: discord.Interaction):
         self.value = True
 
-        async with self.cog.acquire_db() as db:
-            await db.execute("DELETE FROM scheduled_messages WHERE guild_id = ? AND message_id = ?",
-                             (self.guild_id, self.message_id))
-            await db.commit()
+        await self.cog.bot.db.execute_write(
+            "DELETE FROM scheduled_messages WHERE guild_id = ? AND message_id = ?",
+            (self.guild_id, self.message_id)
+        )
 
         if self.guild_id in self.cog.message_cache and self.message_id in self.cog.message_cache[self.guild_id]:
             del self.cog.message_cache[self.guild_id][self.message_id]
@@ -840,36 +825,24 @@ class RepeatingMessages(commands.Cog):
         if self.send_repeating_messages.is_running():
             self.send_repeating_messages.cancel()
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
-    async def init_db(self):
-        await self.bot.db.wait_ready()
-
     async def populate_caches(self):
         self.message_cache.clear()
-        async with self.acquire_db() as db:
-            async with db.execute("SELECT * FROM scheduled_messages") as cursor:
-                rows = cursor.fetchall()
-                columns = [column[0] for column in cursor.description]
-                for row in rows:
-                    data = dict(zip(columns, row))
-                    if data.get("response_type") is None:
-                        data["response_type"] = "text"
-                    raw_embed = data.get("embed_data")
-                    if raw_embed:
-                        try:
-                            data["embed_data"] = json.loads(raw_embed)
-                        except Exception:
-                            data["embed_data"] = None
-                    g_id = data["guild_id"]
-                    m_id = data["message_id"]
+        rows = await self.bot.db.execute("SELECT * FROM scheduled_messages")
+        for data in rows:
+            if data.get("response_type") is None:
+                data["response_type"] = "text"
+            raw_embed = data.get("embed_data")
+            if raw_embed:
+                try:
+                    data["embed_data"] = json.loads(raw_embed)
+                except Exception:
+                    data["embed_data"] = None
+            g_id = data["guild_id"]
+            m_id = data["message_id"]
 
-                    if g_id not in self.message_cache:
-                        self.message_cache[g_id] = {}
-                    self.message_cache[g_id][m_id] = data
+            if g_id not in self.message_cache:
+                self.message_cache[g_id] = {}
+            self.message_cache[g_id][m_id] = data
 
     def get_next_message_id(self, guild_id: int) -> int:
         guild_msgs = self.message_cache.get(guild_id, {})
@@ -936,7 +909,7 @@ class RepeatingMessages(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="repeating_messages")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             rows = await export_table(
                 db, "SELECT * FROM scheduled_messages WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"scheduled_messages": rows}
@@ -948,11 +921,9 @@ class RepeatingMessages(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "repeating_messages":
             return DataDeleteResult(feature_id="repeating_messages")
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM scheduled_messages WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        rowcount = await self.bot.db.execute_write("DELETE FROM scheduled_messages WHERE guild_id = ?", (guild_id,))
         self.message_cache.pop(guild_id, None)
-        return DataDeleteResult(feature_id="repeating_messages", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="repeating_messages", deleted=True, rows_affected=rowcount)
 
     async def _channel_sendable(self, guild: discord.Guild, channel_id: int) -> bool:
         channel = guild.get_channel(channel_id)
@@ -973,12 +944,10 @@ class RepeatingMessages(commands.Cog):
                 continue
             if await self._channel_sendable(guild, data["channel_id"]):
                 continue
-            async with self.acquire_db() as db:
-                await db.execute(
-                    "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
-                    (guild.id, m_id),
-                )
-                await db.commit()
+            await self.bot.db.execute_write(
+                "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
+                (guild.id, m_id),
+            )
             data["is_active"] = 0
             result.actions.append(f"deactivated_message:{m_id}")
         return result
@@ -1012,18 +981,16 @@ class RepeatingMessages(commands.Cog):
                     except Exception as e:
                         if is_access_error(e):
                             data["is_active"] = 0
-                            async with self.acquire_db() as db:
-                                await db.execute(
-                                    "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
-                                    (guild_id, m_id),
-                                )
-                                await db.commit()
+                            await self.bot.db.execute_write(
+                                "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
+                                (guild_id, m_id),
+                            )
                             await report_access_failure(
                                 self.bot, guild_id, "repeating_messages", f"message:{m_id}"
                             )
 
         if updates:
-            async with self.acquire_db() as db:
+            async with self.bot.db.acquire_db() as db:
                 await db.executemany(
                     "UPDATE scheduled_messages SET next_send_time = ? WHERE guild_id = ? AND message_id = ?",
                     updates

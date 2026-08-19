@@ -25,22 +25,22 @@ class BanningCog(commands.Cog):
     async def cog_unload(self):
         self.bot.tree.interaction_check = None
 
-    async def ban_user_api(self, user_id: int, reason: str = None) -> bool:
+    async def ban_user_api(self, user_id: int, reason: str | None = None) -> bool:
         if user_id in self.banned_users_cache:
             return False
 
         self.banned_users_cache.add(user_id)
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "INSERT OR IGNORE INTO banned_users (user_id, reason) VALUES (?, ?)", (user_id, reason)
         )
         return True
 
-    async def ban_guild_api(self, guild_id: int, reason: str = None) -> bool:
+    async def ban_guild_api(self, guild_id: int, reason: str | None = None) -> bool:
         if guild_id in self.banned_guilds_cache:
             return False
 
         self.banned_guilds_cache.add(guild_id)
-        await self.bot.db.execute(
+        await self.bot.db.execute_write(
             "INSERT OR IGNORE INTO banned_guilds (guild_id, reason) VALUES (?, ?)", (guild_id, reason)
         )
 

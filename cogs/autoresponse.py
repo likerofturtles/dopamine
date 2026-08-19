@@ -2,18 +2,15 @@ import asyncio
 import json
 import re
 import time
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any, Set
 
-import aiosqlite
 import discord
 from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands
 from rapidfuzz import fuzz
 
 from cogs.embed import UseEmbedPage
-from utils.data_handlers import export_table
 from utils.data_protocol import DataDeleteResult, DataExportChunk, DataFeatureMeta, DataMonitorResult
 from utils.discord_health import is_access_error, report_access_failure
 
@@ -619,7 +616,7 @@ class ChannelSelect(PrivateLayoutView):
         container = discord.ui.Container()
         self.select = discord.ui.ChannelSelect(placeholder="Select a channel...", min_values=0, max_values=25)
         self.select.callback = self.select_channel
-        container.add_item(discord.ui.TextDisplay(f"{"### Step 3: Select the channel where you want the string to be detected:" if self.firsttime else "### Select the channel where you want the string to be detected:"}"))
+        container.add_item(discord.ui.TextDisplay("### Step 3: Select the channel where you want the string to be detected:" if self.firsttime else "### Select the channel where you want the string to be detected:"))
         container.add_item(discord.ui.ActionRow(self.select))
         if self.firsttime:
             skip_button = discord.ui.Button(label="Skip (Detect in All Channels / Set it up later)",
@@ -679,7 +676,7 @@ class FinalStep(PrivateLayoutView):
         self.clear_items()
         container = discord.ui.Container()
 
-        container.add_item(discord.ui.TextDisplay(f"### Step 4: Finalise the Autoresponse by configuring the settings below."))
+        container.add_item(discord.ui.TextDisplay("### Step 4: Finalise the Autoresponse by configuring the settings below."))
         container.add_item(discord.ui.Separator())
         case_btn = discord.ui.Button(label=f"{'Disable' if self.draft.get('case_sensitive', False) else 'Enable'} Case Sensitivity",
                                      style=discord.ButtonStyle.secondary if self.draft.get('case_sensitive', False) else discord.ButtonStyle.primary)
@@ -936,29 +933,16 @@ class Autoresponse(commands.Cog):
     async def cog_unload(self):
         pass
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
-    async def init_db(self):
-        await self.bot.db.wait_ready()
-
     async def populate_cache(self):
-        async with self.acquire_db() as db:
-            async with db.execute(
-                """
-                SELECT id, guild_id, trigger, response_type, response_text, embed_content,
-                       embed_data, channels, match_mode, fuzzy_threshold, case_sensitive,
-                       created_by, created_at
-                FROM autoresponses
-                """
-            ) as cursor:
-                rows = cursor.fetchall()
-                columns = [col[0] for col in cursor.description]
-
-        for row in rows:
-            data = dict(zip(columns, row))
+        rows = await self.bot.db.execute(
+            """
+            SELECT id, guild_id, trigger, response_type, response_text, embed_content,
+                   embed_data, channels, match_mode, fuzzy_threshold, case_sensitive,
+                   created_by, created_at
+            FROM autoresponses
+            """
+        )
+        for data in rows:
             record = AutoresponseRecord(
                 id=data["id"],
                 guild_id=data["guild_id"],
@@ -995,33 +979,32 @@ class Autoresponse(commands.Cog):
         channels_raw = _serialize_channels(draft.get("channels"))
         embed_data_raw = _serialize_embed_data(draft.get("embed_data"))
 
-        async with self.acquire_db() as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO autoresponses (
-                    guild_id, trigger, response_type, response_text, embed_content,
-                    embed_data, channels, match_mode, fuzzy_threshold, case_sensitive,
-                    created_by, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    guild_id,
-                    draft.get("trigger"),
-                    draft.get("response_type"),
-                    draft.get("response_text"),
-                    draft.get("embed_content"),
-                    embed_data_raw,
-                    channels_raw,
-                    draft.get("match_mode", "exact"),
-                    int(draft.get("fuzzy_threshold", 75)),
-                    int(bool(draft.get("case_sensitive", False))),
-                    user_id,
-                    now_ts,
-                ),
+        await self.bot.db.execute_write(
+            """
+            INSERT INTO autoresponses (
+                guild_id, trigger, response_type, response_text, embed_content,
+                embed_data, channels, match_mode, fuzzy_threshold, case_sensitive,
+                created_by, created_at
             )
-            await db.commit()
-            new_id = cursor.lastrowid
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guild_id,
+                draft.get("trigger"),
+                draft.get("response_type"),
+                draft.get("response_text"),
+                draft.get("embed_content"),
+                embed_data_raw,
+                channels_raw,
+                draft.get("match_mode", "exact"),
+                int(draft.get("fuzzy_threshold", 75)),
+                int(bool(draft.get("case_sensitive", False))),
+                user_id,
+                now_ts,
+            ),
+        )
+        id_rows = await self.bot.db.execute("SELECT last_insert_rowid() AS id")
+        new_id = int(id_rows[0]["id"]) if id_rows else 0
 
         record = AutoresponseRecord(
             id=new_id,
@@ -1042,64 +1025,52 @@ class Autoresponse(commands.Cog):
         return record
 
     async def update_autoresponse_trigger(self, guild_id: int, ar_id: int, new_trigger: str):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET trigger = ? WHERE id = ? AND guild_id = ?",
-                (new_trigger, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET trigger = ? WHERE id = ? AND guild_id = ?",
+            (new_trigger, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             self.cache[guild_id][ar_id].trigger = new_trigger
 
     async def update_autoresponse_channels(self, guild_id: int, ar_id: int, channels: Optional[Set[int]]):
         raw = _serialize_channels(channels)
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET channels = ? WHERE id = ? AND guild_id = ?",
-                (raw, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET channels = ? WHERE id = ? AND guild_id = ?",
+            (raw, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             self.cache[guild_id][ar_id].channels = channels
 
     async def update_autoresponse_mode(self, guild_id: int, ar_id: int, mode: str):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET match_mode = ? WHERE id = ? AND guild_id = ?",
-                (mode, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET match_mode = ? WHERE id = ? AND guild_id = ?",
+            (mode, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             self.cache[guild_id][ar_id].match_mode = mode
 
     async def update_autoresponse_case(self, guild_id: int, ar_id: int, case_sensitive: bool):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET case_sensitive = ? WHERE id = ? AND guild_id = ?",
-                (int(case_sensitive), ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET case_sensitive = ? WHERE id = ? AND guild_id = ?",
+            (int(case_sensitive), ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             self.cache[guild_id][ar_id].case_sensitive = case_sensitive
 
     async def update_autoresponse_fuzzy(self, guild_id: int, ar_id: int, threshold: int):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET fuzzy_threshold = ? WHERE id = ? AND guild_id = ?",
-                (threshold, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET fuzzy_threshold = ? WHERE id = ? AND guild_id = ?",
+            (threshold, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             self.cache[guild_id][ar_id].fuzzy_threshold = threshold
 
     async def update_autoresponse_response_text(self, guild_id: int, ar_id: int, text: str):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET response_type = ?, response_text = ?, embed_content = NULL, embed_data = NULL "
-                "WHERE id = ? AND guild_id = ?",
-                ("text", text, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET response_type = ?, response_text = ?, embed_content = NULL, embed_data = NULL "
+            "WHERE id = ? AND guild_id = ?",
+            ("text", text, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             rec = self.cache[guild_id][ar_id]
             rec.response_type = "text"
@@ -1115,13 +1086,11 @@ class Autoresponse(commands.Cog):
         embed_data: Dict[str, Any],
     ):
         raw_embed = _serialize_embed_data(embed_data)
-        async with self.acquire_db() as db:
-            await db.execute(
-                "UPDATE autoresponses SET response_type = ?, response_text = NULL, embed_content = ?, embed_data = ? "
-                "WHERE id = ? AND guild_id = ?",
-                ("embed", content, raw_embed, ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "UPDATE autoresponses SET response_type = ?, response_text = NULL, embed_content = ?, embed_data = ? "
+            "WHERE id = ? AND guild_id = ?",
+            ("embed", content, raw_embed, ar_id, guild_id),
+        )
         if guild_id in self.cache and ar_id in self.cache[guild_id]:
             rec = self.cache[guild_id][ar_id]
             rec.response_type = "embed"
@@ -1130,12 +1099,10 @@ class Autoresponse(commands.Cog):
             rec.embed_data = embed_data
 
     async def delete_autoresponse(self, guild_id: int, ar_id: int):
-        async with self.acquire_db() as db:
-            await db.execute(
-                "DELETE FROM autoresponses WHERE id = ? AND guild_id = ?",
-                (ar_id, guild_id),
-            )
-            await db.commit()
+        await self.bot.db.execute_write(
+            "DELETE FROM autoresponses WHERE id = ? AND guild_id = ?",
+            (ar_id, guild_id),
+        )
         if guild_id in self.cache:
             self.cache[guild_id].pop(ar_id, None)
 
@@ -1152,8 +1119,7 @@ class Autoresponse(commands.Cog):
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="autoresponse")
-        async with self.acquire_db() as db:
-            rows = await export_table(db, "SELECT * FROM autoresponses WHERE guild_id = ?", (guild_id,))
+        rows = await self.bot.db.execute("SELECT * FROM autoresponses WHERE guild_id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {"autoresponses": rows}
         return chunk
 
@@ -1163,11 +1129,11 @@ class Autoresponse(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "autoresponse":
             return DataDeleteResult(feature_id="autoresponse")
-        async with self.acquire_db() as db:
-            cur = await db.execute("DELETE FROM autoresponses WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        count_rows = await self.bot.db.execute("SELECT COUNT(*) AS cnt FROM autoresponses WHERE guild_id = ?", (guild_id,))
+        rows_affected = int(count_rows[0]["cnt"]) if count_rows else 0
+        await self.bot.db.execute_write("DELETE FROM autoresponses WHERE guild_id = ?", (guild_id,))
         self.cache.pop(guild_id, None)
-        return DataDeleteResult(feature_id="autoresponse", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="autoresponse", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="autoresponse")
@@ -1233,4 +1199,3 @@ class Autoresponse(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Autoresponse(bot))
-

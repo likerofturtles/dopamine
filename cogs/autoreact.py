@@ -58,7 +58,7 @@ class CreatePanelModal(discord.ui.Modal):
         now = time.time()
         serialized = self.cog.serialize_emojis(parsed)
 
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             '''
             INSERT INTO autoreact_panels (guild_id, panel_id, name, emoji, channel_id, is_active, started_at)
             VALUES (?, ?, ?, ?, ?, 1, ?)
@@ -104,7 +104,7 @@ class EditPanelDetailsModal(discord.ui.Modal):
 
         serialized = self.cog.serialize_emojis(parsed)
 
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "UPDATE autoreact_panels SET name = ?, emoji = ? WHERE guild_id = ? AND panel_id = ?",
             (name, serialized, self.panel['guild_id'], self.panel['panel_id'])
         )
@@ -381,7 +381,7 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_state(self, interaction: discord.Interaction):
         new_state = 0 if self.panel['is_active'] else 1
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "UPDATE autoreact_panels SET is_active = ?, started_at = ? WHERE guild_id = ? AND panel_id = ?",
             (new_state, time.time(), self.panel['guild_id'], self.panel['panel_id'])
         )
@@ -403,11 +403,11 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_whitelist(self, interaction: discord.Interaction):
         if self.panel['member_whitelist']:
-            await self.cog.bot.db.execute(
+            await self.cog.bot.db.execute_write(
                 "UPDATE autoreact_panels SET member_whitelist = 0 WHERE guild_id = ? AND panel_id = ?",
                 (self.panel['guild_id'], self.panel['panel_id'])
             )
-            await self.cog.bot.db.execute(
+            await self.cog.bot.db.execute_write(
                 "DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?",
                 (self.panel['guild_id'], self.panel['panel_id'])
             )
@@ -424,7 +424,7 @@ class EditPage(PrivateLayoutView):
 
     async def toggle_image_only(self, interaction: discord.Interaction):
         new_mode = 0 if self.panel['image_only_mode'] else 1
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "UPDATE autoreact_panels SET image_only_mode = ? WHERE guild_id = ? AND panel_id = ?",
             (new_mode, self.panel['guild_id'], self.panel['panel_id'])
         )
@@ -494,7 +494,7 @@ class EditChannelSelect(PrivateLayoutView):
 
     async def select_callback(self, interaction: discord.Interaction):
         new_channel_id = self.select.values[0].id
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "UPDATE autoreact_panels SET channel_id = ? WHERE guild_id = ? AND panel_id = ?",
             (new_channel_id, self.guild_id, self.panel_data['panel_id'])
         )
@@ -535,7 +535,7 @@ class MemberSelect(PrivateLayoutView):
         panel_id = self.panel_data['panel_id']
         key = (self.guild_id, panel_id)
 
-        await self.cog.bot.db.execute(
+        await self.cog.bot.db.execute_write(
             "UPDATE autoreact_panels SET member_whitelist = 1 WHERE guild_id = ? AND panel_id = ?",
             key
         )
@@ -547,7 +547,7 @@ class MemberSelect(PrivateLayoutView):
         for member in members:
             if member.bot:
                 continue
-            await self.cog.bot.db.execute(
+            await self.cog.bot.db.execute_write(
                 "INSERT OR REPLACE INTO autoreact_whitelist (guild_id, panel_id, user_id) VALUES (?, ?, ?)",
                 (self.guild_id, panel_id, member.id)
             )
@@ -692,8 +692,8 @@ class AutoReact(commands.Cog):
 
     async def delete_panel(self, guild_id: int, panel_id: int):
         key = (guild_id, panel_id)
-        await self.bot.db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?", key)
-        await self.bot.db.execute("DELETE FROM autoreact_panels WHERE guild_id = ? AND panel_id = ?", key)
+        await self.bot.db.execute_write("DELETE FROM autoreact_whitelist WHERE guild_id = ? AND panel_id = ?", key)
+        await self.bot.db.execute_write("DELETE FROM autoreact_panels WHERE guild_id = ? AND panel_id = ?", key)
 
         self.panel_cache.pop(key, None)
         self.whitelist_cache.pop(key, None)
@@ -735,8 +735,8 @@ class AutoReact(commands.Cog):
         count_rows = await self.bot.db.execute(
             "SELECT COUNT(*) AS cnt FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
         rows_affected += count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute("DELETE FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
-        await self.bot.db.execute("DELETE FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM autoreact_whitelist WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute_write("DELETE FROM autoreact_panels WHERE guild_id = ?", (guild_id,))
         keys = [k for k in self.panel_cache if k[0] == guild_id]
         for key in keys:
             self.panel_cache.pop(key, None)
@@ -762,7 +762,7 @@ class AutoReact(commands.Cog):
                 continue
             if await self._channel_sendable(guild, panel["channel_id"]):
                 continue
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 "UPDATE autoreact_panels SET is_active = 0 WHERE guild_id = ? AND panel_id = ?",
                 (g_id, panel_id),
             )

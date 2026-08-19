@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import asyncio
 from io import BytesIO
 from typing import Optional
 
@@ -11,7 +14,7 @@ from config import MAX_PATH, FONT_PATH
 
 
 class MaxWithStrapOn(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._bg_image: Optional[Image.Image] = None
         self._font_nick: Optional[ImageFont.FreeTypeFont] = None
@@ -19,7 +22,7 @@ class MaxWithStrapOn(commands.Cog):
         self._avatar_mask: Optional[Image.Image] = None
         self._avatar_size = 120
 
-    async def cog_load(self):
+    async def cog_load(self) -> None:
         """Load and cache resources when cog is loaded."""
         try:
             self._bg_image = Image.open(MAX_PATH).convert('RGBA')
@@ -33,7 +36,7 @@ class MaxWithStrapOn(commands.Cog):
         except Exception as e:
             print(f"Error loading resources in MaxWithStrapOn cog: {e}")
 
-    async def cog_unload(self):
+    async def cog_unload(self) -> None:
         """Clean up resources when cog is unloaded."""
         if self._bg_image:
             self._bg_image.close()
@@ -67,49 +70,17 @@ class MaxWithStrapOn(commands.Cog):
         return self._avatar_mask
 
     async def check_vote_access(self, user_id: int) -> bool:
-        """Check if user has voted (copied logic)."""
+        """Check if user has voted."""
         voter_cog = self.bot.get_cog('TopGGVoter')
         if not voter_cog:
             return True
         return await voter_cog.check_vote_access(user_id)
 
-    @beacon_commands.command(
-        name="maxwithstrapon",
-        description="Ignore the command's name - This command turns anyone into Max Verstappen!", cooldown=(1, 5)
-    )
-    @app_commands.describe(user="User to insert into the image")
-    @app_commands.allowed_contexts(dms=True, guilds=True, private_channels=True)
-    async def maxwithstrapon(
-        self,
-        interaction: discord.Interaction,
-        user: discord.User
-    ):
+    def _generate_image(self, avatar_bytes: bytes, nickname: str, username: str) -> BytesIO:
+        """Synchronous image generation worker function."""
+        bg = self._get_background_image()
         try:
-            if not await self.check_vote_access(interaction.user.id):
-                embed = discord.Embed(
-                    title="Vote to Use This Feature!",
-                    description=f"This command requires voting! To access this feature, please vote for Dopamine here: [top.gg](https://top.gg/bot/{self.bot.user.id})",
-                    color=0xffaa00
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-
-
-            await interaction.response.defer()
-
-            bg = self._get_background_image()
-
-            try:
-                avatar_asset = user.display_avatar.with_format("png").with_size(256)
-                avatar_bytes = await avatar_asset.read()
-            except Exception as e:
-                raise Exception(f"Failed to fetch user avatar: {e}")
-
-            try:
-                pfp = Image.open(BytesIO(avatar_bytes)).convert('RGBA')
-            except Exception as e:
-                raise Exception(f"Failed to process avatar image: {e}")
-
+            pfp = Image.open(BytesIO(avatar_bytes)).convert('RGBA')
             pfp = pfp.resize((self._avatar_size, self._avatar_size), Image.Resampling.LANCZOS)
             mask = self._get_avatar_mask()
             pfp = Image.composite(pfp, Image.new("RGBA", (self._avatar_size, self._avatar_size)), mask)
@@ -117,16 +88,9 @@ class MaxWithStrapOn(commands.Cog):
             circle_center = (204, 120)
             upper_left = (circle_center[0] - self._avatar_size // 2, circle_center[1] - self._avatar_size // 2)
             bg.paste(pfp, upper_left, mask=pfp)
-
             pfp.close()
 
             font_nick, font_username = self._get_fonts()
-
-
-            nickname = user.display_name
-
-            username = user.name
-
             draw = ImageDraw.Draw(bg)
 
             bbox_nick = draw.textbbox((0, 0), nickname, font=font_nick)
@@ -141,15 +105,59 @@ class MaxWithStrapOn(commands.Cog):
             user_pos = (495 - w_user // 2, 155 - h_user // 2)
             draw.text(user_pos, username, font=font_username, fill="white")
 
+            image_binary = BytesIO()
+            bg.save(image_binary, 'PNG', optimize=True)
+            image_binary.seek(0)
+            return image_binary
+        finally:
+            bg.close()
+
+    @beacon_commands.command(
+        name="maxwithstrapon",
+        description="Ignore the command's name - This command turns anyone into Max Verstappen!", cooldown=(1, 5)
+    )
+    @app_commands.describe(user="User to insert into the image")
+    @app_commands.allowed_contexts(dms=True, guilds=True, private_channels=True)
+    async def maxwithstrapon(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User
+    ) -> None:
+        try:
+            if not await self.check_vote_access(interaction.user.id):
+                embed = discord.Embed(
+                    title="Vote to Use This Feature!",
+                    description=f"This command requires voting! To access this feature, please vote for Dopamine here: [top.gg](https://top.gg/bot/{self.bot.user.id})",
+                    color=0xffaa00
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            await interaction.response.defer()
+
             try:
-                with BytesIO() as image_binary:
-                    bg.save(image_binary, 'PNG', optimize=True)
-                    image_binary.seek(0)
-                    await interaction.followup.send(
-                        file=discord.File(image_binary, filename="maxwithstrapon.png")
-                    )
+                avatar_asset = user.display_avatar.with_format("png").with_size(256)
+                avatar_bytes = await avatar_asset.read()
+            except Exception as e:
+                raise Exception(f"Failed to fetch user avatar: {e}")
+
+            try:
+                image_binary = await asyncio.to_thread(
+                    self._generate_image,
+                    avatar_bytes,
+                    user.display_name,
+                    user.name
+                )
+            except Exception as e:
+                raise Exception(f"Failed to process image: {e}")
+
+            try:
+                await interaction.followup.send(
+                    file=discord.File(image_binary, filename="maxwithstrapon.png")
+                )
             finally:
-                bg.close()
+                image_binary.close()
+
         except Exception as e:
             embed = discord.Embed(
                 title="Error",
@@ -161,5 +169,6 @@ class MaxWithStrapOn(commands.Cog):
             else:
                 await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
+
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(MaxWithStrapOn(bot))

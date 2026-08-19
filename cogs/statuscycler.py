@@ -1,17 +1,19 @@
+from __future__ import annotations
+
 import discord
-from discord.ext import tasks, commands
+from discord.ext import commands, tasks
 
 
 class StatusCog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.index = 0
+        self.index: int = 0
         self.change_status.start()
 
-    def cog_unload(self):
+    def cog_unload(self) -> None:
         self.change_status.cancel()
 
-    async def get_stats(self):
+    async def get_stats(self) -> list[str]:
         if not self.bot.application:
             await self.bot.application_info()
 
@@ -34,12 +36,12 @@ class StatusCog(commands.Cog):
             "✨ girl are you dopamine? cuz damn youre dopaFINE!",
             "✨ It's so hard being the best!",
             "✨ moderator? i barely know her",
-            "✨ Dash-da-da, dash-da-da, dash-da, like it's magnetic"
-            "✨ Giving Sapphire a hug (aww!)"
+            "✨ Dash-da-da, dash-da-da, dash-da, like it's magnetic",
+            "✨ Giving Sapphire a hug (aww!)",
         ]
 
     @tasks.loop(seconds=30)
-    async def change_status(self):
+    async def change_status(self) -> None:
         statuses = await self.get_stats()
 
         current_text = statuses[self.index]
@@ -54,9 +56,9 @@ class StatusCog(commands.Cog):
         self.index = (self.index + 1) % len(statuses)
 
     @change_status.before_loop
-    async def before_status_loop(self):
+    async def before_status_loop(self) -> None:
         await self.bot.wait_until_ready()
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(StatusCog(bot))

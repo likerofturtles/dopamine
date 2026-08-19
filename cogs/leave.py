@@ -230,7 +230,7 @@ class LeaveDashboardView(PrivateLayoutView):
         self.build_layout()
 
     async def update_db(self, **kwargs):
-        async with self.cog.acquire_db() as db:
+        async with self.cog.bot.db.acquire_db() as db:
             columns = ", ".join(f"{k} = ?" for k in kwargs.keys())
             values = list(kwargs.values())
             cursor = await db.execute("SELECT 1 FROM leave_settings WHERE guild_id = ?", (self.guild_id,))
@@ -401,7 +401,7 @@ class LeaveDashboardView(PrivateLayoutView):
                 except Exception as e:
                     print(f"Error purging file assets during reset: {e}")
 
-            async with self.cog.acquire_db() as db:
+            async with self.cog.bot.db.acquire_db() as db:
                 await db.execute("""
                     UPDATE leave_settings 
                     SET custom_message=NULL, custom_line1=NULL, custom_line2=NULL, 
@@ -588,11 +588,6 @@ class Leaves(commands.Cog):
     async def cog_unload(self):
         pass
 
-    @asynccontextmanager
-    async def acquire_db(self):
-        async with self.bot.db.acquire_db() as db:
-            yield db
-
     async def init_db(self):
         await self.bot.db.wait_ready()
 
@@ -601,7 +596,7 @@ class Leaves(commands.Cog):
         storage_dir = Path("databases/leave_backgrounds")
         storage_dir.mkdir(parents=True, exist_ok=True)
 
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             async with db.execute(
                     "SELECT guild_id, image_url FROM leave_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL") as cursor:
                 rows = cursor.fetchall()
@@ -632,7 +627,7 @@ class Leaves(commands.Cog):
 
     async def populate_caches(self):
         self.leave_cache.clear()
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             async with db.execute("SELECT * FROM leave_settings") as cursor:
                 rows = cursor.fetchall()
                 columns = [column[0] for column in cursor.description]
@@ -897,7 +892,7 @@ class Leaves(commands.Cog):
         from utils.data_handlers import export_table
         from utils.data_protocol import DataExportChunk
         chunk = DataExportChunk(feature_id="leave")
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             rows = await export_table(db, "SELECT * FROM leave_settings WHERE guild_id = ?", (guild_id,))
         if rows:
             chunk.guild_data[guild_id] = {"settings": rows[0]}
@@ -911,7 +906,7 @@ class Leaves(commands.Cog):
         import os
         from pathlib import Path
         from utils.data_protocol import DataDeleteResult
-        async with self.acquire_db() as db:
+        async with self.bot.db.acquire_db() as db:
             cur = await db.execute("DELETE FROM leave_settings WHERE guild_id = ?", (guild_id,))
             await db.commit()
         self.leave_cache.pop(guild_id, None)
@@ -929,7 +924,7 @@ class Leaves(commands.Cog):
         channel_id = data.get("channel_id")
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel or not channel.permissions_for(guild.me).send_messages:
-            async with self.acquire_db() as db:
+            async with self.bot.db.acquire_db() as db:
                 await db.execute(
                     "UPDATE leave_settings SET is_enabled = 0 WHERE guild_id = ?", (guild.id,)
                 )

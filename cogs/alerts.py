@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import time
 from dataclasses import dataclass
@@ -75,9 +77,9 @@ class Alerts(commands.Cog):
             desc = str(self.description.value).strip()
             now_ts = int(datetime.now(timezone.utc).timestamp())
 
-            await self.parent_cog.bot.db.execute("DELETE FROM alert_reads")
-            await self.parent_cog.bot.db.execute("DELETE FROM alerts")
-            await self.parent_cog.bot.db.execute(
+            await self.parent_cog.bot.db.execute_write("DELETE FROM alert_reads")
+            await self.parent_cog.bot.db.execute_write("DELETE FROM alerts")
+            await self.parent_cog.bot.db.execute_write(
                 "INSERT INTO alerts (title, description, created_at, read_count) VALUES (?, ?, ?, 0)",
                 (title, desc, now_ts),
             )
@@ -120,12 +122,12 @@ class Alerts(commands.Cog):
 
         if position is None:
             alert.read_count += 1
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 "UPDATE alerts SET read_count = ? WHERE id = ?",
                 (alert.read_count, alert.id)
             )
             position = alert.read_count
-            await self.bot.db.execute(
+            await self.bot.db.execute_write(
                 "INSERT INTO alert_reads (alert_id, user_id, position) VALUES (?, ?, ?)",
                 (alert.id, user_id, position)
             )
@@ -202,7 +204,7 @@ class Alerts(commands.Cog):
             "SELECT COUNT(*) AS cnt FROM alert_reads WHERE user_id = ?", (user_id,)
         )
         rows_affected = int(count_rows[0]["cnt"]) if count_rows else 0
-        await self.bot.db.execute("DELETE FROM alert_reads WHERE user_id = ?", (user_id,))
+        await self.bot.db.execute_write("DELETE FROM alert_reads WHERE user_id = ?", (user_id,))
         self._read_users.discard(user_id)
         return DataDeleteResult(feature_id="alerts", deleted=True, rows_affected=rows_affected)
 
