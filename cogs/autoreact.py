@@ -698,7 +698,7 @@ class AutoReact(commands.Cog):
         self.panel_cache.pop(key, None)
         self.whitelist_cache.pop(key, None)
 
-    @beacon_commands.command(name="autoreact", description="Manage AutoReact panels via dashboard", permissions_preset="automations")
+    @beacon_commands.command(name="autoreact", description="Manage AutoReact panels via dashboard", permissions_preset="automation")
     async def autoreact_dashboard_cmd(self, interaction: discord.Interaction):
         view = AutoreactDashboard(interaction.user, self)
         await interaction.response.send_message(view=view)
