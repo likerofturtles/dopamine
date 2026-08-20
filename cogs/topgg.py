@@ -113,6 +113,7 @@ class TopGGVoter(commands.Cog):
         return datetime.now() - last_checked > VOTE_CHECK_COOLDOWN
 
     async def check_vote_access(self, user_id: int) -> bool:
+        return True
         if await self.is_voter(user_id):
             return True
 
