@@ -248,7 +248,9 @@ class AFK(commands.Cog):
         self.notification_cache: Dict[int, Set[int]] = {}
 
     async def cog_load(self):
+        self.bot.logger.info(f"Loading AFK cog")
         await self.bot.db.wait_ready()
+        self.bot.logger.info(f"DB is ready")
         await self.populate_caches()
 
     async def cog_unload(self):
@@ -261,9 +263,10 @@ class AFK(commands.Cog):
         self.afk_users.clear()
         self.missed_pings_cache.clear()
         self.notification_cache.clear()
+        self.bot.logger.info(f"Cleared caches")
 
         now = int(discord.utils.utcnow().timestamp())
-
+        self.bot.logger.info(f"Got now timestamp")
         rows = await self.bot.db.execute(
             """
             SELECT user_id, status, is_global, save_missed_pings,
@@ -271,6 +274,7 @@ class AFK(commands.Cog):
             FROM afk_users
             """
         )
+        self.bot.logger.info(f"Got afk users")
         expired_users = []
         for row in rows:
             user_id = row["user_id"]
@@ -297,11 +301,11 @@ class AFK(commands.Cog):
                 old_nick=old_nick,
             )
             self.afk_users[user_id] = state
-
+        self.bot.logger.info(f"Added them to cache")
         for user_id in expired_users:
             await self.bot.db.execute_write("DELETE FROM afk_users WHERE user_id = ?", (user_id,))
             await self.bot.db.execute_write("DELETE FROM return_notifications WHERE afk_user_id = ?", (user_id,))
-
+        self.bot.logger.info(f"Deleted expired users")
         missed_rows = await self.bot.db.execute(
             """
             SELECT id, user_id, author_id, guild_id, channel_id,
@@ -310,6 +314,7 @@ class AFK(commands.Cog):
             ORDER BY timestamp ASC
             """
         )
+        self.bot.logger.info(f"Got missed pings")
         for row in missed_rows:
             mp_id = row["id"]
             user_id = row["user_id"]
@@ -331,12 +336,13 @@ class AFK(commands.Cog):
                 timestamp=timestamp,
             )
             self.missed_pings_cache.setdefault(user_id, []).append(entry)
-
+        self.bot.logger.info(f"Filled missed pings cache")
         notif_rows = await self.bot.db.execute("SELECT afk_user_id, observer_id FROM return_notifications")
         for row in notif_rows:
             afk_uid = row["afk_user_id"]
             obs_id = row["observer_id"]
             self.notification_cache.setdefault(afk_uid, set()).add(obs_id)
+        self.bot.logger.info(f"Filled return notifications cache")
 
     async def add_notification_request(self, afk_user_id: int, observer_id: int) -> bool:
         observers = self.notification_cache.setdefault(afk_user_id, set())
@@ -554,7 +560,7 @@ class AFK(commands.Cog):
         state = self.afk_users.get(interaction.user.id)
         if state:
             return await interaction.response.send_message("You're already AFK!", ephemeral=True)
-
+        await interaction.response.defer()
         is_global = bool(global_mentions) if global_mentions is not None else True
         save_mp = bool(save_missed_pings) if save_missed_pings is not None else True
 
@@ -566,8 +572,8 @@ class AFK(commands.Cog):
         )
 
         reply = f"{interaction.user.mention} you're now AFK: {status}" if status else f"{interaction.user.mention} you're now AFK!"
-        await interaction.response.send_message(
-            reply
+        await interaction.edit_original_response(
+            content=reply
         )
 
     @commands.Cog.listener()
