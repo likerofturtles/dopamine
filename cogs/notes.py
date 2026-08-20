@@ -304,177 +304,142 @@ class Notes(commands.Cog):
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         return DataMonitorResult(feature_id="notes")
 
+    async def _get_names_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
 
-async def _get_notes_cog(interaction: discord.Interaction):
-    return interaction.client.get_cog('Notes')
+        user_notes = self.notes_cache.get(interaction.user.id, {})
+        choices = [
+            app_commands.Choice(name=name, value=name)
+            for name in user_notes.keys()
+            if current.lower() in name.lower()
+        ]
+        return choices[:25]
 
+    @note_group.command(name="create", description="Open the UI to create a note")
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def note_create(self, interaction: discord.Interaction):
 
-async def _get_names_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return []
-
-    user_notes = cog.notes_cache.get(interaction.user.id, {})
-    choices = [
-        app_commands.Choice(name=name, value=name)
-        for name in user_notes.keys()
-        if current.lower() in name.lower()
-    ]
-    return choices[:25]
-
-
-@note_group.command(name="create", description="Open the UI to create a note")
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@preconditions.global_cooldown()
-async def note_create(interaction: discord.Interaction):
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return await interaction.response.send_message("Notes system unavailable.", ephemeral=True)
-
-    if not await cog.check_vote_access(interaction.user.id):
-        embed = discord.Embed(
-            title="Vote to Use This Feature!",
-            description=f"This command requires voting! To access this feature, please vote for Dopamine here: [top.gg](https://top.gg/bot/{interaction.client.user.id})",
-            color=0xffaa00
-        )
-        return await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    await interaction.response.send_modal(cog.NoteModal(cog))
-
-
-@note_group.command(name="edit", description="Edit an existing note")
-@app_commands.autocomplete(name=_get_names_autocomplete)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@preconditions.global_cooldown()
-async def note_edit(interaction: discord.Interaction, name: str):
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return await interaction.response.send_message("Notes system unavailable.", ephemeral=True)
-
-    if not await cog.check_vote_access(interaction.user.id):
-        return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
-
-    user_id = interaction.user.id
-    current_content = cog.notes_cache.get(user_id, {}).get(name)
-
-    if current_content is None:
-        return await interaction.response.send_message(f"No note found named '{name}'.", ephemeral=True)
-
-    await interaction.response.send_modal(cog.NoteEditModal(cog, name, current_content))
-
-
-@note_group.command(name="get", description="Retrieve a note by name")
-@app_commands.autocomplete(name=_get_names_autocomplete)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@preconditions.global_cooldown()
-async def note_fetch(interaction: discord.Interaction, name: str):
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return await interaction.response.send_message("Notes system unavailable.", ephemeral=True)
-
-    if not await cog.check_vote_access(interaction.user.id):
-        return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
-
-    user_id = interaction.user.id
-    content = cog.notes_cache.get(user_id, {}).get(name)
-
-    if content:
-        await interaction.response.send_message(content, ephemeral=True)
-    else:
-        embed = discord.Embed(
-            title="Error: Note Not Found",
-            description=f"No note found with the name '{name}'.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@note_group.command(name="list", description="List all of your saved notes")
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@preconditions.global_cooldown()
-async def note_list(interaction: discord.Interaction):
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return await interaction.response.send_message("Notes system unavailable.", ephemeral=True)
-
-    if not await cog.check_vote_access(interaction.user.id):
-        return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
-
-    user_notes = sorted(cog.notes_cache.get(interaction.user.id, {}).keys())
-
-    if not user_notes:
-        embed = discord.Embed(
-            title="Your Notes",
-            description="No notes found. Use `/note create` to create one!",
-            color=discord.Color.blurple()
-        )
-        return await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    formatted_notes = [f"- {name}" for name in user_notes]
-
-    view = ViewPaginator(
-        title="Your Notes (Use /note get to see content)",
-        data=formatted_notes,
-        per_page=10,
-        color=discord.Color(0x944ae8)
-    )
-
-    await interaction.response.send_message(
-        embed=view.format_embed(),
-        view=view,
-        ephemeral=True
-    )
-
-
-@note_group.command(name="delete", description="Delete a note by name")
-@app_commands.autocomplete(name=_get_names_autocomplete)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@preconditions.global_cooldown()
-async def note_delete(interaction: discord.Interaction, name: str):
-    cog = await _get_notes_cog(interaction)
-    if not cog:
-        return await interaction.response.send_message("Notes system unavailable.", ephemeral=True)
-
-    user_id = interaction.user.id
-    user_notes = cog.notes_cache.get(user_id, {})
-
-    if name in user_notes:
-        try:
-            deleted_content = user_notes[name]
-
-            await cog.bot.db.execute_write(
-                "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
-                (user_id, name),
-            )
-
-            del cog.notes_cache[user_id][name]
-
+        if not await self.check_vote_access(interaction.user.id):
             embed = discord.Embed(
-                title="Note Deleted Successfully",
-                description=f"Note '{name}' has been deleted.",
-                color=discord.Color.green()
+                title="Vote to Use This Feature!",
+                description=f"This command requires voting! To access this feature, please vote for Dopamine here: [top.gg](https://top.gg/bot/{interaction.client.user.id})",
+                color=0xffaa00
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
-            undo_view = UndoButtonView(
-                user=interaction.user,
-                cog=cog,
-                user_id=user_id,
-                action_type="delete",
-                data={"name": name, "content": deleted_content},
-                interaction=interaction
+        await interaction.response.send_modal(self.NoteModal(self))
+
+    @note_group.command(name="edit", description="Edit an existing note")
+    @app_commands.autocomplete(name=_get_names_autocomplete)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def note_edit(self, interaction: discord.Interaction, name: str):
+        if not await self.check_vote_access(interaction.user.id):
+            return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
+
+        user_id = interaction.user.id
+        current_content = self.notes_cache.get(user_id, {}).get(name)
+
+        if current_content is None:
+            return await interaction.response.send_message(f"No note found named '{name}'.", ephemeral=True)
+
+        await interaction.response.send_modal(self.NoteEditModal(self, name, current_content))
+
+    @note_group.command(name="get", description="Retrieve a note by name")
+    @app_commands.autocomplete(name=_get_names_autocomplete)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def note_fetch(self, interaction: discord.Interaction, name: str):
+
+        if not await self.check_vote_access(interaction.user.id):
+            return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
+
+        user_id = interaction.user.id
+        content = self.notes_cache.get(user_id, {}).get(name)
+
+        if content:
+            await interaction.response.send_message(content, ephemeral=True)
+        else:
+            embed = discord.Embed(
+                title="Error: Note Not Found",
+                description=f"No note found with the name '{name}'.",
+                color=discord.Color.red()
             )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
-            await interaction.response.send_message(embed=embed, view=undo_view, ephemeral=True)
+    @note_group.command(name="list", description="List all of your saved notes")
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def note_list(self, interaction: discord.Interaction):
+        if not await self.check_vote_access(interaction.user.id):
+            return await interaction.response.send_message("Please vote to use this feature.", ephemeral=True)
 
-        except Exception as e:
-            await interaction.response.send_message(f"Error deleting note: {e}", ephemeral=True)
-    else:
-        embed = discord.Embed(
-            title="Error: Note Not Found",
-            description=f"No note found with the name '{name}'.",
-            color=discord.Color.red()
+        user_notes = sorted(self.notes_cache.get(interaction.user.id, {}).keys())
+
+        if not user_notes:
+            embed = discord.Embed(
+                title="Your Notes",
+                description="No notes found. Use `/note create` to create one!",
+                color=discord.Color.blurple()
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        formatted_notes = [f"- {name}" for name in user_notes]
+
+        view = ViewPaginator(
+            title="Your Notes (Use /note get to see content)",
+            data=formatted_notes,
+            per_page=10,
+            color=discord.Color(0x944ae8)
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        await interaction.response.send_message(
+            embed=view.format_embed(),
+            view=view,
+            ephemeral=True
+        )
+
+    @note_group.command(name="delete", description="Delete a note by name")
+    @app_commands.autocomplete(name=_get_names_autocomplete)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def note_delete(self, interaction: discord.Interaction, name: str):
+
+        user_id = interaction.user.id
+        user_notes = self.notes_cache.get(user_id, {})
+
+        if name in user_notes:
+            try:
+                deleted_content = user_notes[name]
+
+                await self.bot.db.execute_write(
+                    "DELETE FROM user_notes WHERE user_id = ? AND note_name = ?",
+                    (user_id, name),
+                )
+
+                del self.notes_cache[user_id][name]
+
+                embed = discord.Embed(
+                    title="Note Deleted Successfully",
+                    description=f"Note '{name}' has been deleted.",
+                    color=discord.Color.green()
+                )
+
+                undo_view = UndoButtonView(
+                    user=interaction.user,
+                    cog=self,
+                    user_id=user_id,
+                    action_type="delete",
+                    data={"name": name, "content": deleted_content},
+                    interaction=interaction
+                )
+
+                await interaction.response.send_message(embed=embed, view=undo_view, ephemeral=True)
+
+            except Exception as e:
+                await interaction.response.send_message(f"Error deleting note: {e}", ephemeral=True)
+        else:
+            embed = discord.Embed(
+                title="Error: Note Not Found",
+                description=f"No note found with the name '{name}'.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
