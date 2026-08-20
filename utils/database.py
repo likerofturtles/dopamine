@@ -672,9 +672,35 @@ class DatabaseManager:
             proxy = AsyncConnectionProxy(self)
             yield proxy
 
+    async def push(self):
+        """Safely push local database changes to the remote Turso cloud."""
+        await self.wait_ready()
+        async with self._lock:
+            if self.conn and hasattr(self.conn, "push"):
+                try:
+                    await asyncio.to_thread(self.conn.push)
+                except Exception:
+                    pass
+
+    async def start_periodic_sync(self, interval: float = 300.0):
+        """Periodically push local database changes to the remote Turso cloud at specified intervals."""
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.push()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
     async def close(self):
         async with self._lock:
             if self.conn:
+                try:
+                    if hasattr(self.conn, "push"):
+                        await asyncio.to_thread(self.conn.push)
+                except Exception:
+                    pass
                 self.conn.close()
                 self.conn = None
             self._ready.clear()

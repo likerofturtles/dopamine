@@ -79,8 +79,17 @@ if __name__ == "__main__":
         try:
             await bot.db.connect()
             await bot.db.ensure_schema()
-            async with bot:
-                await bot.start(TOKEN)
+            sync_task = asyncio.create_task(bot.db.start_periodic_sync(300.0))
+            try:
+                async with bot:
+                    await bot.start(TOKEN)
+            finally:
+                sync_task.cancel()
+                try:
+                    await sync_task
+                except asyncio.CancelledError:
+                    pass
+                await bot.db.close()
         except Exception as e:
             print(f"ERROR: Failed to start the bot: {e}")
             traceback.print_exc()
