@@ -690,6 +690,7 @@ class InsightsCommandsPage(PrivateLayoutView):
     async def _back(self, interaction: discord.Interaction):
         await interaction.response.edit_message(view=InsightsDashboard(self.cog, self.user))
 
+
 class RemovalSearchModal(discord.ui.Modal, title="Search Feedback"):
     query_input = discord.ui.TextInput(
         label="Search Keyword",
@@ -726,11 +727,11 @@ class RemovalFeedbackListPage(PrivateLayoutView):
         self.page = page
         self.sort_by = sort_by
         self.search_query = search_query
-        self.rows: list[tuple] = []
+        self.rows: list[dict] = []
         self.total_count = 0
 
     async def fetch_data(self):
-        """Query the removal_feedback SQLite table dynamically based on sort & search."""
+        """Query the removal_feedback database table via Centralized DatabaseManager execution."""
         query = "SELECT guild_id, guild_name, responder_user_id, reason, other_text, responded_at FROM removal_feedback"
         params: list[str] = []
 
@@ -748,7 +749,6 @@ class RemovalFeedbackListPage(PrivateLayoutView):
         query += f" {sort_sql_map.get(self.sort_by, 'ORDER BY responded_at DESC')}"
 
         self.rows = await self.cog.bot.db.execute(query, tuple(params))
-
         self.total_count = len(self.rows)
 
     def build_layout(self):

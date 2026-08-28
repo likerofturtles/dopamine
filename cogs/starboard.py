@@ -205,7 +205,7 @@ class StarboardCog(commands.Cog):
         if guild_id in self.settings_cache:
             return self.settings_cache[guild_id]
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR IGNORE INTO starboard_guild_settings (guild_id, enabled) VALUES (?, 0)",
             (guild_id,)
         )
@@ -228,7 +228,7 @@ class StarboardCog(commands.Cog):
         set_clause = ", ".join(f"{key} = ?" for key in kwargs.keys())
         values = list(kwargs.values()) + [guild_id]
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             f"UPDATE starboard_guild_settings SET {set_clause} WHERE guild_id = ?", values)
 
     def get_star_emoji(self, count: int) -> str:
@@ -247,7 +247,7 @@ class StarboardCog(commands.Cog):
             self.star_posts_cache[guild_id] = {}
         self.star_posts_cache[guild_id][source_id] = starboard_id
 
-        await self.bot.db.execute_write("""
+        await self.bot.db.execute("""
                              INSERT INTO star_posts (guild_id, source_message_id, starboard_message_id)
                              VALUES (?, ?, ?) ON CONFLICT(guild_id, source_message_id) DO
                              UPDATE SET
@@ -259,7 +259,7 @@ class StarboardCog(commands.Cog):
         if guild_id in self.star_posts_cache:
             self.star_posts_cache[guild_id].pop(source_id, None)
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "DELETE FROM star_posts WHERE guild_id = ? AND source_message_id = ?",
             (guild_id, source_id)
         )
@@ -551,11 +551,14 @@ class StarboardCog(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "starboard":
             return DataDeleteResult(feature_id="starboard")
-        rows_affected = 0
-        rows_affected += await self.bot.db.execute_write(
-            "DELETE FROM star_posts WHERE guild_id = ?", (guild_id,))
-        rows_affected += await self.bot.db.execute_write(
-            "DELETE FROM starboard_guild_settings WHERE guild_id = ?", (guild_id,))
+
+        async with self.bot.db.acquire_db() as db:
+            res1 = await db.execute("DELETE FROM star_posts WHERE guild_id = ?", (guild_id,))
+            res2 = await db.execute("DELETE FROM starboard_guild_settings WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+
+        rows_affected = (res1 if isinstance(res1, int) else 0) + (res2 if isinstance(res2, int) else 0)
+
         self.settings_cache.pop(guild_id, None)
         self.star_posts_cache.pop(guild_id, None)
         return DataDeleteResult(feature_id="starboard", deleted=True, rows_affected=rows_affected)

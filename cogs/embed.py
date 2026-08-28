@@ -125,48 +125,50 @@ class Embeds(commands.Cog):
         return self.build_embed_from_draft(draft)
 
     async def save_embed(
-        self,
-        guild_id: int,
-        user_id: int,
-        draft: EmbedDraft,
-        existing_id: Optional[int] = None,
+            self,
+            guild_id: int,
+            user_id: int,
+            draft: EmbedDraft,
+            existing_id: Optional[int] = None,
     ) -> int:
         name = draft.title or (draft.description[:20] if draft.description else "Untitled Embed")
         now_ts = int(discord.utils.utcnow().timestamp())
 
         if existing_id is None:
-            await self.bot.db.execute_write(
-                """
-                INSERT INTO embeds (
-                    guild_id, name, content, title, description, color, url,
-                    footer_text, footer_icon_url, author_name, author_icon_url,
-                    thumbnail_url, image_url, timestamp_enabled, created_by, created_at
+            async with self.bot.db.acquire_db() as db:
+                await db.execute(
+                    """
+                    INSERT INTO embeds (
+                        guild_id, name, content, title, description, color, url,
+                        footer_text, footer_icon_url, author_name, author_icon_url,
+                        thumbnail_url, image_url, timestamp_enabled, created_by, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        guild_id,
+                        name,
+                        draft.content,
+                        draft.title,
+                        draft.description,
+                        draft.color,
+                        draft.url,
+                        draft.footer_text,
+                        draft.footer_icon_url,
+                        draft.author_name,
+                        draft.author_icon_url,
+                        draft.thumbnail_url,
+                        draft.image_url,
+                        int(draft.timestamp_enabled),
+                        user_id,
+                        now_ts,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    guild_id,
-                    name,
-                    draft.content,
-                    draft.title,
-                    draft.description,
-                    draft.color,
-                    draft.url,
-                    draft.footer_text,
-                    draft.footer_icon_url,
-                    draft.author_name,
-                    draft.author_icon_url,
-                    draft.thumbnail_url,
-                    draft.image_url,
-                    int(draft.timestamp_enabled),
-                    user_id,
-                    now_ts,
-                ),
-            )
-            row = await self.bot.db.execute("SELECT last_insert_rowid() AS id")
-            return row[0]["id"] if row else 0
+                row = await db.execute("SELECT last_insert_rowid() AS id")
+                await db.commit()
+                return row[0]["id"] if row else 0
         else:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 """
                 UPDATE embeds
                 SET name = ?, content = ?, title = ?, description = ?, color = ?, url = ?,
@@ -208,7 +210,7 @@ class Embeds(commands.Cog):
         )
 
     async def delete_embed(self, guild_id: int, embed_id: int) -> None:
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "DELETE FROM embeds WHERE id = ? AND guild_id = ?",
             (embed_id, guild_id),
         )
@@ -230,16 +232,22 @@ class Embeds(commands.Cog):
         chunk.guild_data[guild_id] = {"embeds": embeds}
         return chunk
 
-    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
+    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None,
+                               feature_id: str | None) -> DataDeleteResult:
         return DataDeleteResult(feature_id="embeds")
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "embeds":
             return DataDeleteResult(feature_id="embeds")
-        count_rows = await self.bot.db.execute(
-            "SELECT COUNT(*) AS cnt FROM embeds WHERE guild_id = ?", (guild_id,))
-        rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute_write("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
+
+        async with self.bot.db.acquire_db() as db:
+            count_rows = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM embeds WHERE guild_id = ?", (guild_id,)
+            )
+            rows_affected = count_rows[0]["cnt"] if count_rows else 0
+            await db.execute("DELETE FROM embeds WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+
         return DataDeleteResult(feature_id="embeds", deleted=True, rows_affected=rows_affected)
 
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
@@ -336,13 +344,13 @@ class EmbedDashboard(PrivateLayoutView):
 
 class ManageEmbedPage(PrivateLayoutView):
     def __init__(
-        self,
-        user: discord.abc.User,
-        cog: Embeds,
-        guild_id: int,
-        embeds: List[Dict[str, Any]],
-        page: int = 1,
-        delete_mode: bool = False,
+            self,
+            user: discord.abc.User,
+            cog: Embeds,
+            guild_id: int,
+            embeds: List[Dict[str, Any]],
+            page: int = 1,
+            delete_mode: bool = False,
     ):
         super().__init__(user, timeout=None)
         self.cog = cog
@@ -521,13 +529,13 @@ class ManageGoToPageModal(discord.ui.Modal):
 
 class UseEmbedPage(PrivateLayoutView):
     def __init__(
-        self,
-        user: discord.abc.User,
-        cog: Embeds,
-        guild_id: int,
-        embeds: List[Dict[str, Any]],
-        returnembed: bool = True,
-        on_pick=None,
+            self,
+            user: discord.abc.User,
+            cog: Embeds,
+            guild_id: int,
+            embeds: List[Dict[str, Any]],
+            returnembed: bool = True,
+            on_pick=None,
     ):
         super().__init__(user, timeout=None)
         self.cog = cog

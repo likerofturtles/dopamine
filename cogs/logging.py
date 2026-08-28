@@ -66,6 +66,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
             self.value = False
             await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
 
+
 class Logging(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -79,6 +80,7 @@ class Logging(commands.Cog):
         pass
 
     log = beacon_commands.Group(name="logging", description="Manage logging feature.", permissions_preset="security")
+
     @log.command(name="set", description="Set the logging channel for logs.")
     @app_commands.describe(channel="Channel to use for logs")
     async def setlog(self, interaction: discord.Interaction, channel: discord.TextChannel):
@@ -87,15 +89,18 @@ class Logging(commands.Cog):
 
         embed = discord.Embed(
             title="This channel has been set as the log channel.",
-            description=f"All moderation logs will now be sent here.",
-            color=discord.Color(0x944ae8)
+            description="All moderation logs will now be sent here.",
+            color=discord.Color(0x944ae8),
         )
         embed.set_footer(text=f"Set by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-        channel = self.bot.get_channel(channel.id) or await self.bot.fetch_channel(channel.id)
-        if not channel:
-            return await interaction.response.send_message("I can't find the channel that you set for logging! Please ensure I have the necessary permissions.", ephemeral=True)
+        target_channel = self.bot.get_channel(channel.id) or await self.bot.fetch_channel(channel.id)
+        if not target_channel:
+            return await interaction.response.send_message(
+                "I can't find the channel that you set for logging! Please ensure I have the necessary permissions.",
+                ephemeral=True,
+            )
         try:
-            await channel.send(embed=embed)
+            await target_channel.send(embed=embed)
         except Exception as e:
             if is_access_error(e):
                 await report_access_failure(self.bot, interaction.guild.id, "logging")
@@ -103,10 +108,14 @@ class Logging(commands.Cog):
                 "I can't send messages in that channel. Please check my permissions.",
                 ephemeral=True,
             )
-        await interaction.response.send_message(embed=discord.Embed(
-            title=f"{"Logging has been enabled" if already else "Logging Channel Updated"}",
-            description=f"Log channel set to {channel.mention}",
-            color=discord.Color.green()), ephemeral=True)
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Logging has been enabled" if already else "Logging Channel Updated",
+                description=f"Log channel set to {target_channel.mention}",
+                color=discord.Color.green(),
+            ),
+            ephemeral=True,
+        )
 
     @log.command(name="get", description="Check what channel is set as the logging channel.")
     async def getlog(self, interaction: discord.Interaction):
@@ -122,10 +131,13 @@ class Logging(commands.Cog):
         if not channel:
             return await interaction.response.send_message(
                 "I can't find the channel that you set for logging! Please ensure I have the necessary permissions.",
-                ephemeral=True)
-        embed = discord.Embed(title="Beep, boop!",
-                              description=f"This is a test message to test whether logging works or not.",
-                              color=discord.Colour.blue())
+                ephemeral=True,
+            )
+        embed = discord.Embed(
+            title="Beep, boop!",
+            description="This is a test message to test whether logging works or not.",
+            color=discord.Colour.blue(),
+        )
         try:
             await channel.send(embed=embed)
         except Exception as e:
@@ -143,9 +155,9 @@ class Logging(commands.Cog):
         if not exists:
             return await interaction.response.send_message("Logging is already disabled in this server.", ephemeral=True)
 
-        body_content = f"Are you sure you want to:\n* Disable logging\n* Delete the logging channel from the database permanently."
+        body_content = "Are you sure you want to:\n* Disable logging\n* Delete the logging channel from the database permanently."
         view = DestructiveConfirmationView("Pending Confirmation", body_content)
-        response = await interaction.response.send_message(view=view)
+        await interaction.response.send_message(view=view)
         view.message = await interaction.original_response()
         await view.wait()
 
@@ -153,12 +165,14 @@ class Logging(commands.Cog):
             await self.manager.log_remove(interaction.guild_id)
 
     def data_features(self) -> list[DataFeatureMeta]:
-        return [DataFeatureMeta(
-            feature_id="logging",
-            name="Logging",
-            guild_export=True,
-            guild_delete=True,
-        )]
+        return [
+            DataFeatureMeta(
+                feature_id="logging",
+                name="Logging",
+                guild_export=True,
+                guild_delete=True,
+            )
+        ]
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         return DataExportChunk(feature_id="logging")
@@ -208,6 +222,7 @@ class Logging(commands.Cog):
             await self.manager.log_remove(guild.id)
             result.actions.append("disabled_logging")
         return result
+
 
 async def setup(bot):
     await bot.add_cog(Logging(bot))

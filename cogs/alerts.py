@@ -77,13 +77,16 @@ class Alerts(commands.Cog):
             desc = str(self.description.value).strip()
             now_ts = int(datetime.now(timezone.utc).timestamp())
 
-            await self.parent_cog.bot.db.execute_write("DELETE FROM alert_reads")
-            await self.parent_cog.bot.db.execute_write("DELETE FROM alerts")
-            await self.parent_cog.bot.db.execute_write(
-                "INSERT INTO alerts (title, description, created_at, read_count) VALUES (?, ?, ?, 0)",
-                (title, desc, now_ts),
-            )
-            id_rows = await self.parent_cog.bot.db.execute("SELECT last_insert_rowid() AS id")
+            async with self.parent_cog.bot.db.acquire_db() as db:
+                await db.execute("DELETE FROM alert_reads")
+                await db.execute("DELETE FROM alerts")
+                await db.execute(
+                    "INSERT INTO alerts (title, description, created_at, read_count) VALUES (?, ?, ?, 0)",
+                    (title, desc, now_ts),
+                )
+                id_rows = await db.execute("SELECT last_insert_rowid() AS id")
+                await db.commit()
+
             new_id = int(id_rows[0]["id"]) if id_rows else 0
 
             self.parent_cog._current_alert = CurrentAlert(
@@ -122,15 +125,19 @@ class Alerts(commands.Cog):
 
         if position is None:
             alert.read_count += 1
-            await self.bot.db.execute_write(
-                "UPDATE alerts SET read_count = ? WHERE id = ?",
-                (alert.read_count, alert.id)
-            )
             position = alert.read_count
-            await self.bot.db.execute_write(
-                "INSERT INTO alert_reads (alert_id, user_id, position) VALUES (?, ?, ?)",
-                (alert.id, user_id, position)
-            )
+
+            async with self.bot.db.acquire_db() as db:
+                await db.execute(
+                    "UPDATE alerts SET read_count = ? WHERE id = ?",
+                    (alert.read_count, alert.id)
+                )
+                await db.execute(
+                    "INSERT INTO alert_reads (alert_id, user_id, position) VALUES (?, ?, ?)",
+                    (alert.id, user_id, position)
+                )
+                await db.commit()
+
             self._read_users.add(user_id)
 
         embed = discord.Embed(
@@ -171,7 +178,7 @@ class Alerts(commands.Cog):
                     color=0xFFFFFF
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
-            except:
+            except Exception:
                 pass
 
         asyncio.create_task(send_reminder())
@@ -200,11 +207,13 @@ class Alerts(commands.Cog):
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "alerts":
             return DataDeleteResult(feature_id="alerts")
+
         count_rows = await self.bot.db.execute(
             "SELECT COUNT(*) AS cnt FROM alert_reads WHERE user_id = ?", (user_id,)
         )
         rows_affected = int(count_rows[0]["cnt"]) if count_rows else 0
-        await self.bot.db.execute_write("DELETE FROM alert_reads WHERE user_id = ?", (user_id,))
+
+        await self.bot.db.execute("DELETE FROM alert_reads WHERE user_id = ?", (user_id,))
         self._read_users.discard(user_id)
         return DataDeleteResult(feature_id="alerts", deleted=True, rows_affected=rows_affected)
 

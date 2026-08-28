@@ -15,11 +15,12 @@ from utils.discord_health import is_access_error, report_access_failure, resolve
 from utils.log import LoggingManager
 
 DELETE_OPTIONS = {
-        "Off": 0,
-        "Past 1 Day": 1,
-        "Past 3 Days": 3,
-        "Past 7 Days": 7
-    }
+    "Off": 0,
+    "Past 1 Day": 1,
+    "Past 3 Days": 3,
+    "Past 7 Days": 7
+}
+
 
 def parse_duration(duration_str: str) -> Optional[int]:
     if not duration_str or duration_str.lower() in ["permanent", "perm", "0", "infinite"]:
@@ -143,6 +144,7 @@ class ConfirmationView(PrivateLayoutView):
         if self.value is None and self.message:
             await self.update_view(interaction, "Timed Out", discord.Color(0xdf5046))
             self.stop()
+
 
 class DestructiveConfirmationView(PrivateLayoutView):
     def __init__(self, user, cog, title_text: str, body_text: str, color: discord.Color = None):
@@ -306,13 +308,14 @@ class UndoActionView(discord.ui.View):
         case = await self.cog.get_infraction(self.guild_id, self.case_number)
         if not case:
             return await interaction.response.send_message("Case not found.", ephemeral=True)
-        
+
         await interaction.response.defer()
         await self.cog.execute_case_delete(interaction, interaction.guild, case, reverse=True)
 
         for item in self.children:
             item.disabled = True
-        await interaction.edit_original_response(content=f"This action has been undone by {interaction.user.mention}.", embed=None, view=self)
+        await interaction.edit_original_response(content=f"This action has been undone by {interaction.user.mention}.",
+                                                 embed=None, view=self)
         self.stop()
 
     async def on_timeout(self):
@@ -394,13 +397,13 @@ class ActionModal(discord.ui.Modal):
                     return
 
             if self.is_create:
-                await self.cog.bot.db.execute_write(
+                await self.cog.bot.db.execute(
                     "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
                     (self.guild_id, act_type, dur_seconds, points_val)
                 )
 
             else:
-                await self.cog.bot.db.execute_write(
+                await self.cog.bot.db.execute(
                     "UPDATE actions SET points = ? WHERE id = ? AND guild_id = ?",
                     (points_val, self.existing_action_id, self.guild_id)
                 )
@@ -461,7 +464,7 @@ class SettingValueModal(discord.ui.Modal):
                                                                    ephemeral=True)
 
         guild_id = interaction.guild.id
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             f"UPDATE moderation_settings SET {self.setting_key} = ? WHERE guild_id = ?",
             (final_val, guild_id)
         )
@@ -550,7 +553,8 @@ class MessageReportDashboard(PrivateLayoutView):
         channel_id = settings.get("msg_report_channel")
         roles_raw = settings.get("msg_report_roles")
 
-        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_enabled = ? WHERE guild_id = ?", (new_state, guild_id))
+        await self.cog.bot.db.execute("UPDATE moderation_settings SET msg_report_enabled = ? WHERE guild_id = ?",
+                                       (new_state, guild_id))
         self.cog.settings_cache[guild_id]["msg_report_enabled"] = new_state
 
         if new_state == 1:
@@ -616,7 +620,8 @@ class ChannelSelect(PrivateLayoutView):
         guild_id = interaction.guild.id
         channel_id = interaction.data['values'][0]
 
-        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_channel = ? WHERE guild_id = ?", (channel_id, guild_id))
+        await self.cog.bot.db.execute("UPDATE moderation_settings SET msg_report_channel = ? WHERE guild_id = ?",
+                                       (channel_id, guild_id))
 
         self.cog.settings_cache[guild_id]["msg_report_channel"] = int(channel_id)
 
@@ -659,7 +664,8 @@ class RoleSelect(PrivateLayoutView):
         guild_id = interaction.guild.id
         roles = ",".join(interaction.data['values'])
 
-        await self.cog.bot.db.execute_write("UPDATE moderation_settings SET msg_report_roles = ? WHERE guild_id = ?", (roles, guild_id))
+        await self.cog.bot.db.execute("UPDATE moderation_settings SET msg_report_roles = ? WHERE guild_id = ?",
+                                       (roles, guild_id))
 
         self.cog.settings_cache[guild_id]["msg_report_roles"] = roles
         await interaction.response.edit_message(view=MessageReportDashboard(self.user, self.cog))
@@ -770,6 +776,7 @@ class ReportActionView(discord.ui.View):
         await interaction.response.edit_message(content=f"**Report dismissed by {interaction.user.mention}**",
                                                 view=self)
 
+
 class ModerationDashboard(PrivateLayoutView):
     def __init__(self, user, cog):
         super().__init__(user, timeout=None)
@@ -840,7 +847,8 @@ class SettingsPage(PrivateLayoutView):
         self.clear_items()
         guild_id = self.user.guild.id
         settings = self.cog.settings_cache.get(guild_id, {"punishment_dm": 1, "punishment_log": 1, "simple_mode": 0,
-                                                          "decay_interval": 14, "rejoin_points": 4, "decay_log_enabled": 0})
+                                                          "decay_interval": 14, "rejoin_points": 4,
+                                                          "decay_log_enabled": 0})
 
         dm_on = settings.get("punishment_dm", 1) == 1
         log_on = settings.get("punishment_log", 1) == 1
@@ -885,7 +893,7 @@ class SettingsPage(PrivateLayoutView):
 
         container.add_item(discord.ui.Section(discord.ui.TextDisplay(
             f"* **Decay Frequency:** Edit the frequency at which one {'warning' if simple_on else 'point'} is decayed from a user. Current: **{'Disabled' if decay_val == 0 else f'{decay_val} Days'}**."),
-                                              accessory=decay_btn))
+            accessory=decay_btn))
 
         container.add_item(
             discord.ui.Section(discord.ui.TextDisplay(
@@ -911,7 +919,8 @@ class SettingsPage(PrivateLayoutView):
                                accessory=dm_btn))
 
         container.add_item(discord.ui.Section(
-            discord.ui.TextDisplay("* **Medals:** Show or hide medals next to names of users in Active Infractions list (`/case users` command)."),
+            discord.ui.TextDisplay(
+                "* **Medals:** Show or hide medals next to names of users in Active Infractions list (`/case users` command)."),
             accessory=medals_btn
         ))
 
@@ -924,8 +933,8 @@ class SettingsPage(PrivateLayoutView):
 
     def make_toggle_callback(self, key, new_val):
         async def callback(interaction: discord.Interaction):
-            await self.cog.bot.db.execute_write(f"UPDATE moderation_settings SET {key} = ? WHERE guild_id = ?",
-                             (1 if new_val else 0, interaction.guild.id))
+            await self.cog.bot.db.execute(f"UPDATE moderation_settings SET {key} = ? WHERE guild_id = ?",
+                                           (1 if new_val else 0, interaction.guild.id))
             self.cog.settings_cache[interaction.guild.id][key] = 1 if new_val else 0
             await interaction.response.edit_message(view=SettingsPage(self.user, self.cog))
 
@@ -937,20 +946,23 @@ class SettingsPage(PrivateLayoutView):
                 async with self.cog.bot.db.acquire_db() as db:
                     await db.execute("DELETE FROM actions WHERE guild_id = ?", (interaction.guild.id,))
                     preset = [
-                        ("warning", 0, 1),
-                        ("timeout", 3600, 2),
-                        ("ban", 43200, 3),
-                        ("ban", 604800, 4),
-                        ("ban", 0, 5)
+                        (interaction.guild.id, "warning", 0, 1),
+                        (interaction.guild.id, "timeout", 3600, 2),
+                        (interaction.guild.id, "ban", 43200, 3),
+                        (interaction.guild.id, "ban", 604800, 4),
+                        (interaction.guild.id, "ban", 0, 5)
                     ]
                     await db.executemany(
                         "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
-                        [(interaction.guild.id, a, d, p) for a, d, p in preset])
-                    await db.execute("UPDATE moderation_settings SET simple_mode = 1 WHERE guild_id = ?", (interaction.guild.id,))
+                        preset
+                    )
+                    await db.execute("UPDATE moderation_settings SET simple_mode = 1 WHERE guild_id = ?",
+                                     (interaction.guild.id,))
                     await db.commit()
             else:
                 async with self.cog.bot.db.acquire_db() as db:
-                    await db.execute("UPDATE moderation_settings SET simple_mode = 0 WHERE guild_id = ?", (interaction.guild.id,))
+                    await db.execute("UPDATE moderation_settings SET simple_mode = 0 WHERE guild_id = ?",
+                                     (interaction.guild.id,))
                     await db.commit()
 
             self.cog.settings_cache[interaction.guild.id]["simple_mode"] = 1 if new_val else 0
@@ -1075,7 +1087,7 @@ class CustomisationPage(PrivateLayoutView):
                 if total_actions <= 1:
                     return await interaction.response.send_message("You must keep at least one action.", ephemeral=True)
 
-                await self.cog.bot.db.execute_write("DELETE FROM actions WHERE id = ?", (action['id'],))
+                await self.cog.bot.db.execute("DELETE FROM actions WHERE id = ?", (action['id'],))
                 await self.cog.refresh_action_cache(interaction.guild.id)
                 all_actions = self.cog.action_cache.get(interaction.guild.id, [])
                 max_pages = (len(all_actions) + self.items_per_page - 1) // self.items_per_page
@@ -1190,11 +1202,11 @@ class CaseDetailPage(PrivateLayoutView):
         if self.parent is not None:
             container.add_item(discord.ui.Separator())
             row = discord.ui.ActionRow()
-            back_btn = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back", style=discord.ButtonStyle.secondary)
+            back_btn = discord.ui.Button(emoji=self.cog.bot.back_emoji, label="Back",
+                                         style=discord.ButtonStyle.secondary)
             back_btn.callback = self.back_callback
             row.add_item(back_btn)
             container.add_item(row)
-
 
         self.add_item(container)
 
@@ -1326,6 +1338,7 @@ class CaseUserHistoryPage(PrivateLayoutView):
             view = CaseDetailPage(self.user, self.cog, self.guild, case, self.term, parent=self)
             await interaction.response.edit_message(view=view)
             view.message = self.message
+
         return callback
 
     async def prev_callback(self, interaction: discord.Interaction):
@@ -1494,7 +1507,8 @@ class AllActiveInfractionsPage(PrivateLayoutView):
         )
         live_btn.callback = self.live_callback
         lineone = discord.ui.TextDisplay(header)
-        linetwo = discord.ui.TextDisplay(f"Members with active {self.term}(s) in this server. Sort, search, or enable **Live Mode** for real-time updates.")
+        linetwo = discord.ui.TextDisplay(
+            f"Members with active {self.term}(s) in this server. Sort, search, or enable **Live Mode** for real-time updates.")
         container.add_item(discord.ui.Section(lineone, linetwo, accessory=live_btn))
         container.add_item(discord.ui.Separator())
 
@@ -1511,7 +1525,8 @@ class AllActiveInfractionsPage(PrivateLayoutView):
                 uid = entry["user_id"]
                 name = self.display_names.get(uid, "Unknown User")
 
-                rank_label = self._rank_emoji(idx, show_medals) if self.current_sort == self.SORT_MOST and not self.search_query else f"**#{idx}**"
+                rank_label = self._rank_emoji(idx,
+                                              show_medals) if self.current_sort == self.SORT_MOST and not self.search_query else f"**#{idx}**"
                 last_p = (
                     f"<t:{entry['last_punishment']}:R>"
                     if entry["last_punishment"]
@@ -1595,6 +1610,7 @@ class AllActiveInfractionsPage(PrivateLayoutView):
             )
             await interaction.edit_original_response(view=view)
             view.message = self.message
+
         return callback
 
     async def prev_callback(self, interaction: discord.Interaction):
@@ -1612,6 +1628,7 @@ class AllActiveInfractionsPage(PrivateLayoutView):
 
     async def search_callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(CaseUserSearchModal(self))
+
     async def clear_search_callback(self, interaction: discord.Interaction):
         self.search_query = None
         self.container_header = None
@@ -1760,7 +1777,8 @@ class AllCasesPage(PrivateLayoutView):
 
         container.add_item(discord.ui.TextDisplay(header))
         container.add_item(discord.ui.Section(
-            discord.ui.TextDisplay(f"Browsing all recorded infractions. Use search to find specific Case IDs or User IDs."),
+            discord.ui.TextDisplay(
+                f"Browsing all recorded infractions. Use search to find specific Case IDs or User IDs."),
             accessory=live_btn
         ))
         container.add_item(discord.ui.Separator())
@@ -1947,7 +1965,7 @@ class Moderation(commands.Cog):
             punishment_type: Optional[str], punishment_duration: int, points_after: int, created_at: int
     ) -> int:
         case_number = await self.next_case_number(guild_id)
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             '''INSERT INTO infractions
                (guild_id, case_number, user_id, moderator_id, amount, reason,
                 punishment_type, punishment_duration, points_after, created_at)
@@ -2057,7 +2075,7 @@ class Moderation(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def delete_infraction(self, guild_id: int, case_number: int) -> bool:
-        rowcount = await self.bot.db.execute_write(
+        rowcount = await self.bot.db.execute(
             "DELETE FROM infractions WHERE guild_id = ? AND case_number = ?",
             (guild_id, case_number)
         )
@@ -2077,7 +2095,7 @@ class Moderation(commands.Cog):
             data["last_decay"] = None
         self.user_cache[key] = data
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             '''UPDATE moderation_users SET last_punishment = ?, last_decay = ?
                WHERE guild_id = ? AND user_id = ?''',
             (last_ts, data["last_decay"], guild_id, user_id)
@@ -2107,7 +2125,8 @@ class Moderation(commands.Cog):
                 if member and member.is_timed_out():
                     if new_action != "timeout":
                         try:
-                            await member.timeout(None, reason=f"Case #{case['case_number']} deleted by {interaction.user.display_name}")
+                            await member.timeout(None,
+                                                 reason=f"Case #{case['case_number']} deleted by {interaction.user.display_name}")
                             reversal_notes.append("Timeout removed")
                         except discord.Forbidden:
                             reversal_notes.append("Failed to remove timeout (missing permissions)")
@@ -2120,7 +2139,7 @@ class Moderation(commands.Cog):
                         discord.Object(id=user_id),
                         reason=f"Case #{case['case_number']} deleted by {interaction.user.display_name}"
                     )
-                    await self.bot.db.execute_write(
+                    await self.bot.db.execute(
                         "DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
                         (guild_id, user_id)
                     )
@@ -2162,7 +2181,8 @@ class Moderation(commands.Cog):
                     ),
                     color=discord.Colour.red()
                 )
-                log_embed.set_footer(text=f"by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+                log_embed.set_footer(text=f"by {interaction.user.display_name}",
+                                     icon_url=interaction.user.display_avatar.url)
                 await log_ch.send(embed=log_embed)
 
     async def resolve_user_display(self, guild: discord.Guild, user_id: int) -> str:
@@ -2189,7 +2209,8 @@ class Moderation(commands.Cog):
         self.action_cache.clear()
         self.settings_cache.clear()
 
-        rows = await self.bot.db.execute("SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM moderation_users")
+        rows = await self.bot.db.execute(
+            "SELECT guild_id, user_id, points, last_punishment, last_decay, total_decayed FROM moderation_users")
         for row in rows:
             self.user_cache[f"{row['guild_id']}:{row['user_id']}"] = {
                 "points": row["points"],
@@ -2230,7 +2251,8 @@ class Moderation(commands.Cog):
 
     async def guild_setup(self, interaction: discord.Interaction):
         if interaction.guild.id not in self.settings_cache:
-            await self.bot.db.execute_write("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)", (interaction.guild.id,))
+            await self.bot.db.execute("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)",
+                                            (interaction.guild.id,))
 
             self.settings_cache[interaction.guild.id] = {
                 "punishment_dm": 1, "punishment_log": 1, "simple_mode": 1,
@@ -2252,19 +2274,21 @@ class Moderation(commands.Cog):
 
         rows = await self.bot.db.execute("SELECT 1 FROM actions WHERE guild_id = ? LIMIT 1", (guild_id,))
         if not rows:
-            for a, d, p in default_actions:
-                await self.bot.db.execute_write(
-                    "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
-                    (guild_id, a, d, p)
-                )
+            async with self.bot.db.acquire_db() as db:
+                for a, d, p in default_actions:
+                    await db.execute(
+                        "INSERT INTO actions (guild_id, action_type, duration, points) VALUES (?, ?, ?, ?)",
+                        (guild_id, a, d, p)
+                    )
+                await db.commit()
             await self.refresh_action_cache(guild_id)
-
 
     async def refresh_action_cache(self, guild_id: int):
         if guild_id in self.action_cache:
             self.action_cache[guild_id] = []
 
-        rows = await self.bot.db.execute("SELECT id, guild_id, action_type, duration, points FROM actions WHERE guild_id = ?", (guild_id,))
+        rows = await self.bot.db.execute(
+            "SELECT id, guild_id, action_type, duration, points FROM actions WHERE guild_id = ?", (guild_id,))
         for row in rows:
             action = {
                 "id": row["id"],
@@ -2282,13 +2306,14 @@ class Moderation(commands.Cog):
         if key not in self.user_cache:
             data = {"points": 0, "last_punishment": None, "last_decay": None, "total_decayed": 0}
             self.user_cache[key] = data
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 "INSERT OR IGNORE INTO moderation_users (guild_id, user_id, points, total_decayed) VALUES (?, ?, ?, ?)",
                 (guild_id, user_id, 0, 0)
             )
         return self.user_cache[key]
 
-    async def update_user_points(self, guild_id: int, user_id: int, points: int, punishment_ts: Optional[int] = None, total_decayed: Optional[int] = None):
+    async def update_user_points(self, guild_id: int, user_id: int, points: int, punishment_ts: Optional[int] = None,
+                                 total_decayed: Optional[int] = None):
         key = f"{guild_id}:{user_id}"
         data = await self.get_user_data(guild_id, user_id)
         data["points"] = points
@@ -2300,7 +2325,7 @@ class Moderation(commands.Cog):
 
         self.user_cache[key] = data
 
-        await self.bot.db.execute_write('''
+        await self.bot.db.execute('''
                          UPDATE moderation_users
                          SET points          = ?,
                              last_punishment = ?,
@@ -2308,7 +2333,8 @@ class Moderation(commands.Cog):
                              total_decayed   = ?
                          WHERE guild_id = ?
                            AND user_id = ?
-                         ''', (points, data["last_punishment"], data["last_decay"], data.get("total_decayed", 0), guild_id, user_id))
+                         ''', (points, data["last_punishment"], data["last_decay"], data.get("total_decayed", 0),
+                               guild_id, user_id))
 
         await self.refresh_live_case_views(guild_id)
 
@@ -2432,7 +2458,7 @@ class Moderation(commands.Cog):
                 await interaction.guild.ban(member, reason=reason_text, delete_message_days=delete_days)
                 if duration:
                     unban_ts = int((discord.utils.utcnow() + duration).timestamp())
-                    await self.bot.db.execute_write(
+                    await self.bot.db.execute(
                         "INSERT OR REPLACE INTO ban_schedule (guild_id, user_id, unban_at) VALUES (?, ?, ?)",
                         (interaction.guild.id, member.id, unban_ts)
                     )
@@ -2453,8 +2479,8 @@ class Moderation(commands.Cog):
         await self.bot.db.wait_ready()
         now = int(discord.utils.utcnow().timestamp())
         rows = await self.bot.db.execute(
-                "SELECT guild_id, user_id FROM ban_schedule WHERE unban_at <= ?",
-                (now,)
+            "SELECT guild_id, user_id FROM ban_schedule WHERE unban_at <= ?",
+            (now,)
         )
         for row in rows:
             guild_id = row["guild_id"]
@@ -2541,11 +2567,11 @@ class Moderation(commands.Cog):
                     term = "warning" if is_simple else "point"
                     embed_title = f"Moderation - {term.title()}s Decay Summary"
                     embed_desc = f"Total users decayed: **{len(decays)}**\n\n"
-                    
+
                     for user_id, amount in decays:
                         user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
                         embed_desc += f"* {user.mention} (`{user.id}`): **-{amount}** {term}(s)\n"
-                    
+
                     embed = discord.Embed(tite=embed_title, description=embed_desc, color=discord.Color.blue())
                     try:
                         await log_ch.send(embed=embed)
@@ -2559,8 +2585,6 @@ class Moderation(commands.Cog):
             guild_ids.add(int(g_id_str))
         for guild_id in guild_ids:
             await self.refresh_live_case_views(guild_id)
-
-
 
     async def delete_days_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
         app_commands.Choice[str]]:
@@ -2577,13 +2601,15 @@ class Moderation(commands.Cog):
         )
         return len(rows) > 0
 
-    mod_group = beacon_commands.Group(name="moderation", description="Moderation system settings", permissions_preset="moderator")
+    mod_group = beacon_commands.Group(name="moderation", description="Moderation system settings",
+                                      permissions_preset="moderator")
 
     @mod_group.command(name="dashboard", description="Open the moderation dashboard.")
     async def moderation_dashboard(self, interaction: discord.Interaction):
         await self.guild_setup(interaction)
         if interaction.guild.id not in self.settings_cache:
-            await self.bot.db.execute_write("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)", (interaction.guild.id,))
+            await self.bot.db.execute("INSERT OR IGNORE INTO moderation_settings (guild_id) VALUES (?)",
+                                            (interaction.guild.id,))
             self.settings_cache[interaction.guild.id] = {"punishment_dm": 1, "punishment_log": 1, "simple_mode": 0,
                                                          "decay_interval": 14, "rejoin_points": 4}
         await self.apply_default_actions(interaction.guild.id)
@@ -2604,10 +2630,12 @@ class Moderation(commands.Cog):
         days_to_delete = DELETE_OPTIONS.get(delete_messages, 0)
         await self._add_infraction(interaction, member, amount, reason, days_to_delete)
 
-    @beacon_commands.command(name="warn", description="Issue a warning (Add 1 or more warnings to user).", permissions_preset="moderator")
+    @beacon_commands.command(name="warn", description="Issue a warning (Add 1 or more warnings to user).",
+                             permissions_preset="moderator")
     @app_commands.describe(delete_messages="Wipe message history (Only works if the resulting punishment is a BAN)")
     @app_commands.autocomplete(delete_messages=delete_days_autocomplete)
-    async def warn(self, interaction: discord.Interaction, member: discord.Member, amount: int = 1, reason: Optional[str] = None,
+    async def warn(self, interaction: discord.Interaction, member: discord.Member, amount: int = 1,
+                   reason: Optional[str] = None,
                    delete_messages: Optional[str] = "Off"):
         if amount <= 0:
             return await interaction.response.send_message("The amount can't be negative!", epehemral=True)
@@ -2619,7 +2647,8 @@ class Moderation(commands.Cog):
         days_to_delete = DELETE_OPTIONS.get(delete_messages, 0)
         await self._add_infraction(interaction, member, amount, reason, days_to_delete)
 
-    async def verify_punishment_permissions(self, interaction: discord.Interaction, target: discord.Member) -> Optional[str]:
+    async def verify_punishment_permissions(self, interaction: discord.Interaction, target: discord.Member) -> Optional[
+        str]:
         if target.id == interaction.user.id:
             return "You can't punish yourself!"
         if target.id == self.bot.user.id:
@@ -2677,7 +2706,7 @@ class Moderation(commands.Cog):
             except Exception as e:
                 self.bot.logger.error(f"Error removing timeout for {member.id}: {e}")
 
-            await self.bot.db.execute_write("DELETE FROM pending_punishments WHERE id = ?", (pending_id,))
+            await self.bot.db.execute("DELETE FROM pending_punishments WHERE id = ?", (pending_id,))
 
         all_errors = []
 
@@ -2737,7 +2766,8 @@ class Moderation(commands.Cog):
         else:
             undo_view.message = await interaction.followup.send(embed=embed, view=undo_view)
 
-    @beacon_commands.command(name="pardon", description="Remove points/warnings from a user.", permissions_preset="moderator")
+    @beacon_commands.command(name="pardon", description="Remove points/warnings from a user.",
+                             permissions_preset="moderator")
     async def pardon(self, interaction: discord.Interaction, member: discord.User, amount: int,
                      reason: Optional[str] = None):
         await self.guild_setup(interaction)
@@ -2751,7 +2781,7 @@ class Moderation(commands.Cog):
         term = "Warnings" if settings.get("simple_mode", 0) == 1 else "Points"
 
         embed = discord.Embed(
-            description=f"## {term} Updated\n\n{term} removed: **{amount}**\nOld: **{old_points}** | New: **{new_points}**\n\n{f"**Reason**: {reason}" if reason else "**Reason**: No reason provided."}",
+            description=f"## {term} Updated\n\n{term} removed: **{amount}**\nOld: **{old_points}** | New: **{new_points}**\n\n{f'**Reason**: {reason}' if reason else '**Reason**: No reason provided.'}",
             color=discord.Color(0x944ae8)
         )
         embed.set_author(name=f"{member.name} ({member.id})", icon_url=member.display_avatar.url)
@@ -2766,7 +2796,8 @@ class Moderation(commands.Cog):
                     color=discord.Color(0x944ae8)
                 )
                 log_embed.set_author(name=f"{member.name} ({member.id})", icon_url=member.display_avatar.url)
-                log_embed.set_footer(text=f"by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+                log_embed.set_footer(text=f"by {interaction.user.display_name}",
+                                     icon_url=interaction.user.display_avatar.url)
                 await log_ch.send(embed=log_embed)
 
     @beacon_commands.command(name="unban", description="Unban a user.", permissions_preset="moderator")
@@ -2775,8 +2806,8 @@ class Moderation(commands.Cog):
         try:
             await interaction.guild.unban(user, reason=f"Unbanned by {interaction.user.display_name}: {reason}")
 
-            await self.bot.db.execute_write("DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
-                             (interaction.guild.id, user.id))
+            await self.bot.db.execute("DELETE FROM ban_schedule WHERE guild_id = ? AND user_id = ?",
+                                            (interaction.guild.id, user.id))
 
             settings = self.settings_cache.get(interaction.guild.id, {})
             rejoin_pts = settings.get("rejoin_points", 4)
@@ -2796,7 +2827,8 @@ class Moderation(commands.Cog):
                 log_embed = discord.Embed(description=f"**{user.name}** has been unbanned.\n\n**Reason**: {reason}",
                                           color=discord.Color(0x944ae8))
                 log_embed.set_author(name=f"{user.name} ({user.id})", icon_url=user.display_avatar.url)
-                log_embed.set_footer(text=f"by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+                log_embed.set_footer(text=f"by {interaction.user.display_name}",
+                                     icon_url=interaction.user.display_avatar.url)
                 await log_ch.send(embed=log_embed)
 
     @beacon_commands.command(name="points", description="Show points info.", permissions_preset="moderator")
@@ -2979,7 +3011,9 @@ class Moderation(commands.Cog):
 
         try:
             await report_channel.send(content=content, embed=embed, view=view)
-            await interaction.response.send_message("Message reported to moderators successfully! Thank you for keeping the community safe! ❤️", ephemeral=True)
+            await interaction.response.send_message(
+                "Message reported to moderators successfully! Thank you for keeping the community safe! ❤️",
+                ephemeral=True)
         except discord.Forbidden:
             await interaction.response.send_message(
                 "I lack permissions to send messages to the configured reporting channel.", ephemeral=True)
@@ -2989,10 +3023,13 @@ class Moderation(commands.Cog):
             "SELECT id, user_id, moderator_id, reason, created_at, timeout_until FROM pending_punishments WHERE guild_id = ? ORDER BY created_at DESC",
             (guild_id,)
         )
-        return [{"id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"], "reason": row["reason"], "created_at": row["created_at"], "timeout_until": row["timeout_until"]} for row in rows]
+        return [
+            {"id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"], "reason": row["reason"],
+             "created_at": row["created_at"], "timeout_until": row["timeout_until"]} for row in rows]
 
-    async def add_pending_punishment(self, guild_id: int, user_id: int, moderator_id: int, reason: str, created_at: int, timeout_until: int) -> int:
-        await self.bot.db.execute_write(
+    async def add_pending_punishment(self, guild_id: int, user_id: int, moderator_id: int, reason: str, created_at: int,
+                                     timeout_until: int) -> int:
+        await self.bot.db.execute(
             "INSERT INTO pending_punishments (guild_id, user_id, moderator_id, reason, created_at, timeout_until) VALUES (?, ?, ?, ?, ?, ?)",
             (guild_id, user_id, moderator_id, reason, created_at, timeout_until)
         )
@@ -3000,14 +3037,18 @@ class Moderation(commands.Cog):
         return int(id_rows[0]["id"]) if id_rows else 0
 
     async def remove_pending_punishment(self, guild_id: int, pending_id: int):
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "DELETE FROM pending_punishments WHERE guild_id = ? AND id = ?",
             (guild_id, pending_id)
         )
 
-    @beacon_commands.command(name="pending", description="Put a user on a 7-day timeout and add to pending punishments list.", permissions_preset="moderator")
-    @app_commands.describe(member="The user to put on pending punishment", reason="The reason for the pending punishment")
-    async def pending_command(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    @beacon_commands.command(name="pending",
+                             description="Put a user on a 7-day timeout and add to pending punishments list.",
+                             permissions_preset="moderator")
+    @app_commands.describe(member="The user to put on pending punishment",
+                           reason="The reason for the pending punishment")
+    async def pending_command(self, interaction: discord.Interaction, member: discord.Member,
+                              reason: str = "No reason provided"):
         await self.guild_setup(interaction)
         if await self.is_user_pending(interaction.guild.id, member.id):
             return await interaction.response.send_message(
@@ -3025,7 +3066,7 @@ class Moderation(commands.Cog):
         timeout_until = now + 7 * 86400
 
         await member.timeout(discord.utils.utcnow() + timedelta(days=7), reason=reason)
-        
+
         pending_id = await self.add_pending_punishment(
             guild_id=interaction.guild.id,
             user_id=member.id,
@@ -3048,17 +3089,18 @@ class Moderation(commands.Cog):
                 )
                 embed.set_footer(text="Please take the pending action as soon as possible.")
                 await log_ch.send(embed=embed)
-        
+
         await interaction.response.send_message(f"🤐")
         msg = await interaction.original_response()
         await msg.add_reaction("🤐")
 
-    @beacon_commands.command(name="pending-list", description="List all pending punishments.", permissions_preset="moderator")
+    @beacon_commands.command(name="pending-list", description="List all pending punishments.",
+                             permissions_preset="moderator")
     async def pending_list_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
         await self.guild_setup(interaction)
         pending = await self.get_pending_punishments(interaction.guild.id)
-        
+
         view = PendingPunishmentsView(interaction.user, self, interaction.guild, pending)
         await view.build_layout()
         await interaction.edit_original_response(view=view)
@@ -3124,7 +3166,8 @@ class Moderation(commands.Cog):
         }
         return chunk
 
-    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
+    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None,
+                               feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "moderation":
             return DataDeleteResult(feature_id="moderation")
         return DataDeleteResult(
@@ -3138,7 +3181,8 @@ class Moderation(commands.Cog):
             return DataDeleteResult(feature_id="moderation")
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
-            for table in ("pending_punishments", "infractions", "ban_schedule", "moderation_users", "actions", "moderation_settings"):
+            for table in ("pending_punishments", "infractions", "ban_schedule", "moderation_users", "actions",
+                          "moderation_settings"):
                 cur = await db.execute(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,))
                 rows_affected += cur.rowcount
             await db.commit()
@@ -3164,14 +3208,14 @@ class Moderation(commands.Cog):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 channel = None
         accessible = (
-            channel is not None
-            and isinstance(channel, discord.abc.GuildChannel)
-            and channel.guild.id == guild.id
-            and channel.permissions_for(guild.me).view_channel
-            and channel.permissions_for(guild.me).send_messages
+                channel is not None
+                and isinstance(channel, discord.abc.GuildChannel)
+                and channel.guild.id == guild.id
+                and channel.permissions_for(guild.me).view_channel
+                and channel.permissions_for(guild.me).send_messages
         )
         if not accessible:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 "UPDATE moderation_settings SET msg_report_enabled = 0 WHERE guild_id = ?", (guild.id,))
             settings["msg_report_enabled"] = 0
             result.actions.append("disabled_msg_report")
@@ -3193,7 +3237,6 @@ class PendingPunishmentsView(PrivateLayoutView):
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay("## Pending Punishments"))
 
-        
         start = self.page * self.per_page
         end = start + self.per_page
         current_pending = self.pending[start:end]
@@ -3202,8 +3245,10 @@ class PendingPunishmentsView(PrivateLayoutView):
             container.add_item(discord.ui.TextDisplay("*No pending users for punishment found*"))
         for p in current_pending:
             container.add_item(discord.ui.Separator())
-            user = self.guild.get_member(p["user_id"]) or self.cog.bot.get_user(p["user_id"]) or await self.cog.bot.fetch_user(p["user_id"]) or "Unknown User"
-            mod = self.guild.get_member(p["moderator_id"]) or self.cog.bot.get_user(p["moderator_id"]) or await self.cog.bot.fetch_user(p["moderator_id"]) or "Unknown Moderator"
+            user = self.guild.get_member(p["user_id"]) or self.cog.bot.get_user(
+                p["user_id"]) or await self.cog.bot.fetch_user(p["user_id"]) or "Unknown User"
+            mod = self.guild.get_member(p["moderator_id"]) or self.cog.bot.get_user(
+                p["moderator_id"]) or await self.cog.bot.fetch_user(p["moderator_id"]) or "Unknown Moderator"
 
             resolve_row = discord.ui.ActionRow()
             remove_btn = discord.ui.Button(label="Remove from Pending", style=discord.ButtonStyle.success)
@@ -3212,19 +3257,20 @@ class PendingPunishmentsView(PrivateLayoutView):
             punish_btn.callback = self.make_punish_callback(p["id"])
             resolve_row.add_item(remove_btn)
             resolve_row.add_item(punish_btn)
-            
+
             container.add_item(discord.ui.TextDisplay(
-                    f"### {'{:s} {:s}'.format(getattr(user, 'display_name', 'Unknown'), f'({user.id})' if hasattr(user, 'id') else '')}\n"
-                    f"* **Moderator:** {getattr(mod, 'mention', 'Unknown')}\n"
-                    f"* **Reason:** {p['reason']}\n"
-                    f"* **Created:** <t:{p['created_at']}:f>\n"
-                    f"* **Timeout until:** <t:{p['timeout_until']}:f>"))
+                f"### {'{:s} {:s}'.format(getattr(user, 'display_name', 'Unknown'), f'({user.id})' if hasattr(user, 'id') else '')}\n"
+                f"* **Moderator:** {getattr(mod, 'mention', 'Unknown')}\n"
+                f"* **Reason:** {p['reason']}\n"
+                f"* **Created:** <t:{p['created_at']}:f>\n"
+                f"* **Timeout until:** <t:{p['timeout_until']}:f>"))
             container.add_item(resolve_row)
 
         nav_row = discord.ui.ActionRow()
         prev_btn = discord.ui.Button(emoji="◀️", style=discord.ButtonStyle.primary, disabled=self.page == 0)
         prev_btn.callback = self.prev_page
-        next_btn = discord.ui.Button(emoji="▶️", style=discord.ButtonStyle.primary, disabled=self.page >= self.total_pages - 1)
+        next_btn = discord.ui.Button(emoji="▶️", style=discord.ButtonStyle.primary,
+                                     disabled=self.page >= self.total_pages - 1)
         next_btn.callback = self.next_page
         nav_row.add_item(prev_btn)
         nav_row.add_item(next_btn)
@@ -3232,7 +3278,7 @@ class PendingPunishmentsView(PrivateLayoutView):
         container.add_item(discord.ui.Separator())
 
         container.add_item(nav_row)
-        
+
         self.add_item(container)
 
     async def prev_page(self, interaction: discord.Interaction):
@@ -3262,12 +3308,15 @@ class PendingPunishmentsView(PrivateLayoutView):
                     self.page = self.total_pages - 1
                 await self.build_layout()
                 await interaction.edit_original_response(view=self)
+
         return callback
 
     def make_punish_callback(self, pending_id: int):
         async def callback(interaction: discord.Interaction):
             await interaction.response.send_modal(PunishPendingModal(self, pending_id, interaction.guild.id))
+
         return callback
+
 
 class PunishPendingModal(discord.ui.Modal):
     def __init__(self, parent_view, pending_id: int, guild_id: int):
@@ -3318,7 +3367,8 @@ class PunishPendingModal(discord.ui.Modal):
         if not pending:
             return await interaction.response.send_message("Pending punishment not found.", ephemeral=True)
 
-        member = self.parent_view.guild.get_member(pending["user_id"]) or await self.parent_view.guild.fetch_member(pending["user_id"])
+        member = self.parent_view.guild.get_member(pending["user_id"]) or await self.parent_view.guild.fetch_member(
+            pending["user_id"])
         if not member:
             return await interaction.response.send_message("User not found in the server.", ephemeral=True)
 
@@ -3333,7 +3383,8 @@ class PunishPendingModal(discord.ui.Modal):
 
         await self.parent_view.cog.remove_pending_punishment(self.parent_view.guild.id, self.pending_id)
         reason = reason or "No reason provided"
-        await self.parent_view.cog._add_infraction(interaction, member, amount, reason, delete_messages=delete_messages, new=True)
+        await self.parent_view.cog._add_infraction(interaction, member, amount, reason, delete_messages=delete_messages,
+                                                   new=True)
         pending = await self.parent_view.cog.get_pending_punishments(interaction.guild.id)
         view = PendingPunishmentsView(interaction.user, self.parent_view.cog, interaction.guild, pending)
         await view.build_layout()

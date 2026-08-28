@@ -387,8 +387,8 @@ class WelcomeDashboardView(PrivateLayoutView):
         async with self.cog.bot.db.acquire_db() as db:
             columns = ", ".join(f"{k} = ?" for k in kwargs.keys())
             values = list(kwargs.values())
-            cursor = await db.execute("SELECT 1 FROM welcome_settings WHERE guild_id = ?", (self.guild_id,))
-            if not cursor.fetchone():
+            existing = await db.execute("SELECT 1 FROM welcome_settings WHERE guild_id = ?", (self.guild_id,))
+            if not existing:
                 await db.execute("INSERT INTO welcome_settings (guild_id) VALUES (?)", (self.guild_id,))
 
             await db.execute(f"UPDATE welcome_settings SET {columns} WHERE guild_id = ?", (*values, self.guild_id))
@@ -606,17 +606,20 @@ class Welcome(commands.Cog):
         storage_dir = Path("databases/welcome_backgrounds")
         storage_dir.mkdir(parents=True, exist_ok=True)
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT guild_id, image_url FROM welcome_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL") as cursor:
-                rows = cursor.fetchall()
+        rows = await self.bot.db.execute(
+            "SELECT guild_id, image_url FROM welcome_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL"
+        )
 
-            if not rows:
-                return
+        if not rows:
+            return
 
-            self.bot.logger.info(f"[Migration] Migrating {len(rows)} legacy welcome background URL profiles...")
-            async with aiohttp.ClientSession() as session:
-                for guild_id, url in rows:
+        self.bot.logger.info(f"[Migration] Migrating {len(rows)} legacy welcome background URL profiles...")
+        async with aiohttp.ClientSession() as session:
+            async with self.bot.db.acquire_db() as db:
+                for row in rows:
+                    guild_id = row["guild_id"]
+                    url = row["image_url"]
+
                     raw_bytes = await fetch_image(session, url)
                     if not raw_bytes:
                         continue
@@ -630,20 +633,17 @@ class Welcome(commands.Cog):
                             "UPDATE welcome_settings SET local_image_path = ?, image_url = NULL WHERE guild_id = ?",
                             (str(local_path), guild_id)
                         )
-                        await db.commit()
                     except Exception as e:
                         self.bot.logger.error(
-                            f"[Migration Failure] Couldn't compress/migrate legacy layout tracking metrics for server {guild_id}: {e}")
+                            f"[Migration Failure] Couldn't compress/migrate legacy layout tracking metrics for server {guild_id}: {e}"
+                        )
+                await db.commit()
 
     async def populate_caches(self):
         self.welcome_cache.clear()
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT * FROM welcome_settings") as cursor:
-                rows = cursor.fetchall()
-                columns = [column[0] for column in cursor.description]
-                for row in rows:
-                    data = dict(zip(columns, row))
-                    self.welcome_cache[data["guild_id"]] = data
+        rows = await self.bot.db.execute("SELECT * FROM welcome_settings")
+        for row in rows:
+            self.welcome_cache[row["guild_id"]] = row
 
     def get_background_image(self, guild_id: int, local_image_path: Optional[str]) -> pyvips.Image:
         if guild_id in self.image_bytes_cache:
@@ -978,14 +978,12 @@ class Welcome(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None):
         import os
         from utils.data_protocol import DataDeleteResult
-        async with self.bot.db.acquire_db() as db:
-            cur = await db.execute("DELETE FROM welcome_settings WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        affected = await self.bot.db.execute("DELETE FROM welcome_settings WHERE guild_id = ?", (guild_id,))
         self.welcome_cache.pop(guild_id, None)
         bg = Path("databases/welcome_backgrounds") / f"{guild_id}.jpg"
         if bg.is_file():
             os.remove(bg)
-        return DataDeleteResult(feature_id="welcome", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="welcome", deleted=True, rows_affected=affected)
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult
@@ -996,11 +994,7 @@ class Welcome(commands.Cog):
         channel_id = data.get("channel_id")
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel or not channel.permissions_for(guild.me).send_messages:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute(
-                    "UPDATE welcome_settings SET is_enabled = 0 WHERE guild_id = ?", (guild.id,)
-                )
-                await db.commit()
+            await self.bot.db.execute("UPDATE welcome_settings SET is_enabled = 0 WHERE guild_id = ?", (guild.id,))
             if guild.id in self.welcome_cache:
                 self.welcome_cache[guild.id]["is_enabled"] = 0
             result.actions.append("disabled_welcome")

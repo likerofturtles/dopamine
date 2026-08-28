@@ -14,6 +14,7 @@ class BanningCog(commands.Cog):
 
     async def cog_load(self):
         await self.bot.db.wait_ready()
+
         rows = await self.bot.db.execute("SELECT user_id FROM banned_users")
         for row in rows:
             self.banned_users_cache.add(row["user_id"])
@@ -30,7 +31,7 @@ class BanningCog(commands.Cog):
             return False
 
         self.banned_users_cache.add(user_id)
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR IGNORE INTO banned_users (user_id, reason) VALUES (?, ?)", (user_id, reason)
         )
         return True
@@ -40,7 +41,7 @@ class BanningCog(commands.Cog):
             return False
 
         self.banned_guilds_cache.add(guild_id)
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR IGNORE INTO banned_guilds (guild_id, reason) VALUES (?, ?)", (guild_id, reason)
         )
 
@@ -53,7 +54,7 @@ class BanningCog(commands.Cog):
     async def global_ban_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild_id and interaction.guild_id in self.banned_guilds_cache:
             rows = await self.bot.db.execute(
-                "SELECT reason FROM banned_guilds WHERE guild_id = ?", (interaction.guild.id,)
+                "SELECT reason FROM banned_guilds WHERE guild_id = ?", (interaction.guild_id,)
             )
             reason = rows[0]["reason"] if rows else "No reason provided."
             await interaction.response.send_message(
@@ -69,7 +70,7 @@ class BanningCog(commands.Cog):
             )
             reason = rows[0]["reason"] if rows else "No reason provided."
             await interaction.response.send_message(
-                f"You are banned from using Dopamine for the reason given below. If you have any questions, email **Dopamine Studios** at dopaminediscordbot@gmail.com.\n\n**Reason:** {reason}",
+                f"You are banned from using Dopamine for the reason given below. If you have any questions, email **Dopamine Studios** at dopaminediscordbot@gmail.com.",
             )
             return False
 
@@ -88,7 +89,8 @@ class BanningCog(commands.Cog):
             await interaction.response.send_message(f"✅ User `{target_id}` has been banned.", ephemeral=True)
             user = self.bot.get_user(target_id) or await self.bot.fetch_user(target_id)
             try:
-                await user.send(f"You have been **banned** from using Dopamine.\n\n**Reason:** {reason}\n-# If you have any questions, email Dopamine Studios at dopaminediscordbot@gmail.com.")
+                await user.send(
+                    f"You have been **banned** from using Dopamine.\n\n**Reason:** {reason}\n-# If you have any questions, email Dopamine Studios at dopaminediscordbot@gmail.com.")
             except discord.Forbidden:
                 pass
         else:

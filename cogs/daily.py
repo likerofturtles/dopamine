@@ -43,7 +43,7 @@ class DeleteImageModal(discord.ui.Modal):
             return await interaction.response.send_message("Please enter a valid number.", ephemeral=True)
 
         target_id = self.image_ids[val - 1]
-        await self.cog.bot.db.execute_write("DELETE FROM cat_images WHERE id = ?", (target_id,))
+        await self.cog.bot.db.execute("DELETE FROM cat_images WHERE id = ?", (target_id,))
 
         await interaction.response.send_message(
             f"Successfully deleted image #{val} (Database ID: `{target_id}`)!", ephemeral=True
@@ -85,6 +85,7 @@ class AddImageModal(discord.ui.Modal, title="Add Cat Image"):
         valid_types = {'image/png', 'image/jpeg', 'image/gif'}
         saved_count = 0
         failed_files = []
+        insert_payloads = []
 
         for uploaded_file in uploaded_files:
             if uploaded_file.content_type not in valid_types:
@@ -93,10 +94,15 @@ class AddImageModal(discord.ui.Modal, title="Add Cat Image"):
 
             try:
                 image_bytes = await uploaded_file.read()
-                await self.cog.bot.db.execute_write("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", (image_bytes, uploader_id))
-                saved_count += 1
+                insert_payloads.append((image_bytes, uploader_id))
             except Exception as e:
                 failed_files.append(f"`{uploaded_file.filename}` ({e})")
+
+        if insert_payloads:
+            async with self.cog.bot.db.acquire_db() as db:
+                await db.executemany("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", insert_payloads)
+                await db.commit()
+            saved_count = len(insert_payloads)
 
         response_msg = []
         if saved_count > 0:
@@ -286,7 +292,7 @@ class DailyCats(commands.Cog):
         logger.info("DailyCats cog unloaded.")
 
     async def save_next_time(self):
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR REPLACE INTO daily_settings (key, value) VALUES (?, ?)",
             ('next_send_time', self.next_send_time.isoformat())
         )
@@ -312,7 +318,7 @@ class DailyCats(commands.Cog):
             return await ctx.send("Please attach at least one image.")
 
         valid_types = ['image/png', 'image/jpeg', 'image/gif']
-        images_added = 0
+        insert_payloads = []
 
         for attachment in ctx.message.attachments:
             if attachment.content_type not in valid_types:
@@ -322,12 +328,16 @@ class DailyCats(commands.Cog):
 
             try:
                 image_bytes = await attachment.read()
-                await self.bot.db.execute_write("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", (image_bytes, user_id))
-                images_added += 1
+                insert_payloads.append((image_bytes, user_id))
             except Exception as e:
                 await ctx.send(f"Failed to add {attachment.filename}: {e}", delete_after=10)
 
-        await ctx.send(f"Successfully added {images_added} cat pics to the database!", delete_after=10)
+        if insert_payloads:
+            async with self.bot.db.acquire_db() as db:
+                await db.executemany("INSERT INTO cat_images (image_data, user_id) VALUES (?, ?)", insert_payloads)
+                await db.commit()
+
+        await ctx.send(f"Successfully added {len(insert_payloads)} cat pics to the database!", delete_after=10)
         await asyncio.sleep(10)
         await ctx.message.delete()
 
@@ -403,7 +413,7 @@ class DailyCats(commands.Cog):
                         await asyncio.sleep(0.25)
                     except Exception as e:
                         if is_access_error(e):
-                            await self.bot.db.execute_write(
+                            await self.bot.db.execute(
                                 "DELETE FROM cat_channels WHERE channel_id = ?", (channel_id,)
                             )
                             self.active_cat_channels.discard(channel_id)
@@ -432,7 +442,7 @@ class DailyCats(commands.Cog):
         if channel_id in self.active_cat_channels:
             return await interaction.response.send_message("Daily cat pics are already active here!", ephemeral=True)
 
-        await self.bot.db.execute_write("INSERT INTO cat_channels (channel_id) VALUES (?)", (channel_id,))
+        await self.bot.db.execute("INSERT INTO cat_channels (channel_id) VALUES (?)", (channel_id,))
         self.active_cat_channels.add(channel_id)
 
         unix_timestamp = int(self.next_send_time.timestamp())
@@ -449,7 +459,7 @@ class DailyCats(commands.Cog):
         if channel_id not in self.active_cat_channels:
             return await interaction.response.send_message("Feature isn't active in this channel.", ephemeral=True)
 
-        await self.bot.db.execute_write("DELETE FROM cat_channels WHERE channel_id = ?", (channel_id,))
+        await self.bot.db.execute("DELETE FROM cat_channels WHERE channel_id = ?", (channel_id,))
         self.active_cat_channels.remove(channel_id)
 
         await interaction.response.send_message(content="Daily cat pictures stopped.")
@@ -464,8 +474,10 @@ class DailyCats(commands.Cog):
             if count == 0:
                 return await ctx.send("The cat database is already empty.")
 
-            await self.bot.db.execute_write("DELETE FROM cat_images")
-            await self.bot.db.execute_write("DELETE FROM sqlite_sequence WHERE name='cat_images'")
+            async with self.bot.db.acquire_db() as db:
+                await db.execute("DELETE FROM cat_images")
+                await db.execute("DELETE FROM sqlite_sequence WHERE name='cat_images'")
+                await db.commit()
 
             await ctx.send(f"Successfully wiped **{count}** images from the database.")
 
@@ -517,7 +529,7 @@ class DailyCats(commands.Cog):
             return DataDeleteResult(feature_id="daily")
         count_rows = await self.bot.db.execute("SELECT COUNT(*) AS cnt FROM cat_images WHERE user_id = ?", (user_id,))
         rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute_write("DELETE FROM cat_images WHERE user_id = ?", (user_id,))
+        await self.bot.db.execute("DELETE FROM cat_images WHERE user_id = ?", (user_id,))
         return DataDeleteResult(feature_id="daily", deleted=True, rows_affected=rows_affected)
 
     async def data_delete_guild(self, guild_id: int, feature_id: Optional[str]) -> DataDeleteResult:
@@ -533,7 +545,7 @@ class DailyCats(commands.Cog):
         count_rows = await self.bot.db.execute(
             f"SELECT COUNT(*) AS cnt FROM cat_channels WHERE channel_id IN ({placeholders})", channel_ids)
         rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             f"DELETE FROM cat_channels WHERE channel_id IN ({placeholders})", channel_ids)
         for cid in channel_ids:
             self.active_cat_channels.discard(cid)
@@ -555,7 +567,7 @@ class DailyCats(commands.Cog):
         result = DataMonitorResult(feature_id="daily")
         for channel_id in await self._guild_cat_channels(guild):
             if not await self._channel_sendable(guild, channel_id):
-                await self.bot.db.execute_write("DELETE FROM cat_channels WHERE channel_id = ?", (channel_id,))
+                await self.bot.db.execute("DELETE FROM cat_channels WHERE channel_id = ?", (channel_id,))
                 self.active_cat_channels.discard(channel_id)
                 result.actions.append(f"removed_cat_channel:{channel_id}")
         return result

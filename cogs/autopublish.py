@@ -85,7 +85,7 @@ class AutoPublish(commands.Cog):
             )
 
         try:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 "INSERT OR IGNORE INTO autopublish_channels (channel_id, guild_id) VALUES (?, ?)",
                 (channel.id, interaction.guild.id if interaction.guild else 0)
             )
@@ -105,7 +105,7 @@ class AutoPublish(commands.Cog):
             )
 
         try:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 "DELETE FROM autopublish_channels WHERE channel_id = ?", (channel.id,)
             )
             self.cache.discard(channel.id)
@@ -141,10 +141,12 @@ class AutoPublish(commands.Cog):
             "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
         )
         cids = [r["channel_id"] for r in rows]
-        await self.bot.db.execute_write("DELETE FROM autopublish_channels WHERE guild_id = ?", (guild_id,))
+        deleted_count = await self.bot.db.execute(
+            "DELETE FROM autopublish_channels WHERE guild_id = ?", (guild_id,)
+        )
         for cid in cids:
             self.cache.discard(cid)
-        return DataDeleteResult(feature_id="autopublish", deleted=True, rows_affected=len(cids))
+        return DataDeleteResult(feature_id="autopublish", deleted=True, rows_affected=deleted_count)
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult
@@ -152,13 +154,21 @@ class AutoPublish(commands.Cog):
         rows = await self.bot.db.execute(
             "SELECT channel_id FROM autopublish_channels WHERE guild_id = ?", (guild.id,)
         )
-        cids = [r["channel_id"] for r in rows]
-        for cid in cids:
+
+        invalid_cids = []
+        for r in rows:
+            cid = r["channel_id"]
             ch = guild.get_channel(cid)
             if not ch or not ch.permissions_for(guild.me).send_messages:
-                await self.bot.db.execute_write("DELETE FROM autopublish_channels WHERE channel_id = ?", (cid,))
+                invalid_cids.append((cid,))
                 self.cache.discard(cid)
                 result.actions.append(f"removed_channel_{cid}")
+
+        if invalid_cids:
+            async with self.bot.db.acquire_db() as db:
+                await db.executemany("DELETE FROM autopublish_channels WHERE channel_id = ?", invalid_cids)
+                await db.commit()
+
         return result
 
 

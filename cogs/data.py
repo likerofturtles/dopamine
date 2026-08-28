@@ -6,15 +6,14 @@ import shutil
 import tempfile
 import time
 import zipfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import discord
-from beacon import beacon_commands, PrivateLayoutView
+from beacon import PrivateLayoutView, beacon_commands
 from discord.ext import commands, tasks
 
-from VERSION import bot_version
 from cogs.data_views import (
     DataHome,
     ExportQueuedView,
@@ -39,6 +38,7 @@ from utils.data_protocol import (
     DataFeatureMeta,
     DataMonitorResult,
 )
+from VERSION import bot_version
 
 
 class Data(commands.Cog):
@@ -133,12 +133,20 @@ class Data(commands.Cog):
         )
 
     def data_features(self) -> list[DataFeatureMeta]:
-        return [DataFeatureMeta(
-            feature_id="usage", name="Usage Analytics",
-            user_export=True, user_delete=True, guild_export=True, guild_delete=True,
-        )]
+        return [
+            DataFeatureMeta(
+                feature_id="usage",
+                name="Usage Analytics",
+                user_export=True,
+                user_delete=True,
+                guild_export=True,
+                guild_delete=True,
+            )
+        ]
 
-    async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
+    async def data_export_user(
+        self, user_id: int, *, guild_ids: list[int] | None
+    ) -> DataExportChunk:
         return await export_usage_user(self.bot.db, user_id, guild_ids)
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
@@ -248,7 +256,11 @@ class Data(commands.Cog):
         guild_id = job.get("guild_id")
         guild_ids = json.loads(job["guild_ids_json"]) if job.get("guild_ids_json") else None
 
-        cogs = [self._get_cog_for_feature(feature_filter)] if feature_filter else list(self.iter_data_cogs())
+        cogs = (
+            [self._get_cog_for_feature(feature_filter)]
+            if feature_filter
+            else list(self.iter_data_cogs())
+        )
         if self not in cogs and (not feature_filter or feature_filter == "usage"):
             cogs.insert(0, self)
 
@@ -261,7 +273,11 @@ class Data(commands.Cog):
                 if scope in ("user", "feature_user") and user_id is not None and feat.user_export:
                     chunk = await cog.data_export_user(user_id, guild_ids=guild_ids)
                     self._merge_chunk(payload, chunk)
-                elif scope in ("guild", "feature_guild") and guild_id is not None and feat.guild_export:
+                elif (
+                    scope in ("guild", "feature_guild")
+                    and guild_id is not None
+                    and feat.guild_export
+                ):
                     chunk = await cog.data_export_guild(guild_id)
                     self._merge_chunk(payload, chunk, guild_id=guild_id)
 
@@ -291,6 +307,7 @@ class Data(commands.Cog):
         if not job_rows:
             return
         job = job_rows[0]
+
         await self.bot.db.execute(
             "UPDATE export_queue SET status='processing', started_at=? WHERE id=?",
             (int(time.time()), job_id),
@@ -306,10 +323,12 @@ class Data(commands.Cog):
             container = discord.ui.Container()
             container.add_item(discord.ui.TextDisplay("## Your Data Export"))
             container.add_item(discord.ui.Separator())
-            container.add_item(discord.ui.TextDisplay(
-                "Attached is your requested data export from Dopamine. "
-                "Open **dopamine_export.md** for a readable summary, or **raw_dopamine_export.json** for the full raw data."
-            ))
+            container.add_item(
+                discord.ui.TextDisplay(
+                    "Attached is your requested data export from Dopamine. "
+                    "Open **dopamine_export.md** for a readable summary, or **raw_dopamine_export.json** for the full raw data."
+                )
+            )
             container.add_item(discord.ui.File(media=f"attachment://{zip_path.name}"))
             view = PrivateLayoutView(user, timeout=None)
             view.add_item(container)
@@ -367,7 +386,9 @@ class Data(commands.Cog):
         include_global: bool = True,
     ):
         global_features = {"afk", "notes", "topgg", "alerts", "usage"}
-        targets = [self._get_cog_for_feature(feature_id)] if feature_id else list(self.iter_data_cogs())
+        targets = (
+            [self._get_cog_for_feature(feature_id)] if feature_id else list(self.iter_data_cogs())
+        )
         if not feature_id:
             targets.insert(0, self)
         for cog in targets:
@@ -388,7 +409,9 @@ class Data(commands.Cog):
                     )
 
     async def run_guild_delete(self, guild_id: int, feature_id: str | None = None):
-        targets = [self._get_cog_for_feature(feature_id)] if feature_id else list(self.iter_data_cogs())
+        targets = (
+            [self._get_cog_for_feature(feature_id)] if feature_id else list(self.iter_data_cogs())
+        )
         if not feature_id:
             targets.insert(0, self)
         for cog in targets:
@@ -415,16 +438,22 @@ class Data(commands.Cog):
             if guild is not None:
                 result = await cog.data_monitor_guild(guild)
             else:
-                result = await cog.data_monitor_guild_offline(guild_id) if hasattr(cog, "data_monitor_guild_offline") else None
+                result = (
+                    await cog.data_monitor_guild_offline(guild_id)
+                    if hasattr(cog, "data_monitor_guild_offline")
+                    else None
+                )
                 if result is None:
                     return
             if result.actions:
-                for action in result.actions:
-                    await self.bot.db.execute(
-                        """INSERT INTO monitor_log (guild_id, feature_id, action, detail, created_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (guild_id, feature_id, action, detail[:200], int(time.time())),
-                    )
+                async with self.bot.db.acquire_db() as db:
+                    for action in result.actions:
+                        await db.execute(
+                            """INSERT INTO monitor_log (guild_id, feature_id, action, detail, created_at)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            (guild_id, feature_id, action, detail[:200], int(time.time())),
+                        )
+                    await db.commit()
         except Exception:
             pass
 
@@ -437,12 +466,14 @@ class Data(commands.Cog):
             try:
                 result = await cog.data_monitor_guild(guild)
                 if result.actions:
-                    for action in result.actions:
-                        await self.bot.db.execute(
-                            """INSERT INTO monitor_log (guild_id, feature_id, action, detail, created_at)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            (guild.id, result.feature_id, action, "", int(time.time())),
-                        )
+                    async with self.bot.db.acquire_db() as db:
+                        for action in result.actions:
+                            await db.execute(
+                                """INSERT INTO monitor_log (guild_id, feature_id, action, detail, created_at)
+                                   VALUES (?, ?, ?, ?, ?)""",
+                                (guild.id, result.feature_id, action, "", int(time.time())),
+                            )
+                        await db.commit()
             except Exception:
                 pass
 
@@ -471,7 +502,6 @@ class Data(commands.Cog):
         )
         for row in rows:
             guild_id = row["guild_id"]
-            guild_name = row["guild_name"]
             if self.bot.get_guild(guild_id) is not None:
                 await self.bot.db.execute(
                     "DELETE FROM guild_removal_schedule WHERE guild_id = ?", (guild_id,)
@@ -511,15 +541,20 @@ class Data(commands.Cog):
                     break
         except (discord.Forbidden, discord.HTTPException):
             pass
-        await self.bot.db.execute(
-            """INSERT INTO guild_inviters (guild_id, inviter_user_id, guild_name, joined_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(guild_id) DO UPDATE SET
-               inviter_user_id=excluded.inviter_user_id, guild_name=excluded.guild_name,
-               joined_at=excluded.joined_at""",
-            (guild.id, inviter_id, guild.name, int(time.time())),
-        )
-        await self.bot.db.execute("DELETE FROM guild_removal_schedule WHERE guild_id = ?", (guild.id,))
+
+        async with self.bot.db.acquire_db() as db:
+            await db.execute(
+                """INSERT INTO guild_inviters (guild_id, inviter_user_id, guild_name, joined_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(guild_id) DO UPDATE SET
+                   inviter_user_id=excluded.inviter_user_id, guild_name=excluded.guild_name,
+                   joined_at=excluded.joined_at""",
+                (guild.id, inviter_id, guild.name, int(time.time())),
+            )
+            await db.execute(
+                "DELETE FROM guild_removal_schedule WHERE guild_id = ?", (guild.id,)
+            )
+            await db.commit()
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
@@ -529,6 +564,7 @@ class Data(commands.Cog):
         )
         if rows:
             inviter_id = rows[0]["inviter_user_id"]
+
         await self.bot.db.execute(
             """INSERT INTO guild_removal_schedule (guild_id, guild_name, removed_at)
                VALUES (?, ?, ?)
@@ -542,6 +578,7 @@ class Data(commands.Cog):
             view.message = msg
         except (discord.Forbidden, discord.HTTPException, discord.NotFound):
             pass
+
         for cog in self.iter_data_cogs():
             if hasattr(cog, "data_monitor_guild"):
                 try:
@@ -557,10 +594,13 @@ class Data(commands.Cog):
         async def _sum(since: Optional[str]) -> int:
             if since:
                 rows = await self.bot.db.execute(
-                    "SELECT COALESCE(SUM(count),0) AS s FROM usage_daily WHERE date >= ?", (since,)
+                    "SELECT COALESCE(SUM(count),0) AS s FROM usage_daily WHERE date >= ?",
+                    (since,),
                 )
             else:
-                rows = await self.bot.db.execute("SELECT COALESCE(SUM(count),0) AS s FROM usage_daily")
+                rows = await self.bot.db.execute(
+                    "SELECT COALESCE(SUM(count),0) AS s FROM usage_daily"
+                )
             return int(rows[0]["s"]) if rows else 0
 
         self.cached_insights = {
@@ -586,7 +626,9 @@ class Data(commands.Cog):
         fb_rows = await self.bot.db.execute("SELECT COUNT(*) AS cnt FROM removal_feedback")
         self.cached_insights["feedback_count"] = int(fb_rows[0]["cnt"]) if fb_rows else 0
 
-    @beacon_commands.command(name="data", description="Manage your data and privacy settings.")
+    @beacon_commands.command(
+        name="data", description="Manage your data and privacy settings."
+    )
     async def data_cmd(self, interaction: discord.Interaction):
         if not interaction.guild:
             return await interaction.response.send_message(
@@ -598,7 +640,9 @@ class Data(commands.Cog):
     async def di_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.refresh_insights_cache()
-        await interaction.edit_original_response(view=InsightsDashboard(self, interaction.user))
+        await interaction.edit_original_response(
+            view=InsightsDashboard(self, interaction.user)
+        )
 
 
 async def setup(bot: commands.Bot):

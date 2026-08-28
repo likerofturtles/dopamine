@@ -115,13 +115,13 @@ class FactorialCog(commands.Cog):
         exists = bool(rows)
 
         if exists:
-            await self.bot.db.execute_write("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
+            await self.bot.db.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
             if guild_id in self.enabled_cache:
                 self.enabled_cache.remove(guild_id)
             await interaction.response.send_message("Factorial detection has been **DISABLED** for this server.",
                                                     ephemeral=False)
         else:
-            await self.bot.db.execute_write("INSERT OR IGNORE INTO enabled_guilds (guild_id) VALUES (?)", (guild_id,))
+            await self.bot.db.execute("INSERT OR IGNORE INTO enabled_guilds (guild_id) VALUES (?)", (guild_id,))
             self.enabled_cache.add(guild_id)
             await interaction.response.send_message("Factorial detection has been **ENABLED** for this server.",
                                                     ephemeral=False)
@@ -148,7 +148,7 @@ class FactorialCog(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> Any:
         from utils.data_protocol import DataDeleteResult
         rows_before = len(self.enabled_cache)
-        await self.bot.db.execute_write("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute("DELETE FROM enabled_guilds WHERE guild_id = ?", (guild_id,))
         self.enabled_cache.discard(guild_id)
         rows_affected = rows_before - len(self.enabled_cache)
         return DataDeleteResult(feature_id="factorial", deleted=True, rows_affected=rows_affected)

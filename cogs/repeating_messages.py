@@ -73,7 +73,7 @@ class CreateRepeatingMessageModal(Modal):
             "started_at": current_time
         }
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             """
             INSERT INTO scheduled_messages
             (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
@@ -151,7 +151,7 @@ class CreateRepeatingEmbedModal(Modal):
             "started_at": current_time
         }
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             """
             INSERT INTO scheduled_messages
             (guild_id, message_id, name, channel_id, message_content, response_type, embed_content, embed_data,
@@ -173,6 +173,7 @@ class CreateRepeatingEmbedModal(Modal):
         )
         asyncio.create_task(self.cog.send_repeating_messages())
 
+
 class EditMessageContentModal(Modal):
     def __init__(self, cog: "RepeatingMessages", guild_id: int, message_id: int, current_content: str, parent_view):
         super().__init__(title="Edit Content")
@@ -192,7 +193,7 @@ class EditMessageContentModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         new_content = self.content_input.value
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             "UPDATE scheduled_messages SET message_content = ?, response_type = ?, embed_content = NULL, embed_data = NULL "
             "WHERE guild_id = ? AND message_id = ?",
             (new_content, "text", self.guild_id, self.message_id)
@@ -237,7 +238,7 @@ class EditFrequencyModal(Modal):
         now = time.time()
         new_next = now + seconds
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             "UPDATE scheduled_messages SET frequency_seconds = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
             (seconds, new_next, self.guild_id, self.message_id)
         )
@@ -283,7 +284,6 @@ class RepeatingMessagesDashboard(PrivateLayoutView):
 
 
 class CreateChannelSelectView(PrivateLayoutView):
-
     def __init__(self, user, cog):
         super().__init__(user, timeout=None)
         self.cog = cog
@@ -376,6 +376,7 @@ class RepeatingResponseTypeView(PrivateLayoutView):
         container.add_item(row)
         self.add_item(container)
 
+
 class ChannelSelectView(PrivateLayoutView):
     def __init__(self, user, cog, guild_id, message_id, previous_view):
         super().__init__(user, timeout=None)
@@ -404,7 +405,7 @@ class ChannelSelectView(PrivateLayoutView):
     async def select_callback(self, interaction: discord.Interaction):
         channel = self.select.values[0]
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             "UPDATE scheduled_messages SET channel_id = ? WHERE guild_id = ? AND message_id = ?",
             (channel.id, self.guild_id, self.message_id)
         )
@@ -451,14 +452,12 @@ class ManagePage(PrivateLayoutView):
             for idx, panel in enumerate(panels, start_idx + 1):
                 p_title = panel['name']
                 chan_id = panel['channel_id']
-                m_id = panel['message_id']
 
                 btn_edit = discord.ui.Button(label="Edit", style=discord.ButtonStyle.secondary)
                 btn_edit.callback = self.create_edit_callback(panel)
 
                 display_text = f"{idx}. **{p_title}** in <#{chan_id}>"
                 container.add_item(discord.ui.Section(discord.ui.TextDisplay(display_text), accessory=btn_edit))
-
 
             container.add_item(discord.ui.Separator())
             row = discord.ui.ActionRow()
@@ -523,6 +522,7 @@ class ManagePage(PrivateLayoutView):
         view = RepeatingMessagesDashboard(self.user, self.cog)
         await interaction.response.edit_message(view=view)
 
+
 class GoToPageModal(Modal):
     def __init__(self, parent_view: "ManagePage", total_pages: int):
         super().__init__(title="Jump to Page")
@@ -555,6 +555,7 @@ class GoToPageModal(Modal):
                 "Invalid input. Please enter a valid whole number.",
                 ephemeral=True
             )
+
 
 class EditPage(PrivateLayoutView):
     def __init__(self, user, cog, guild_id, panel_data):
@@ -642,14 +643,14 @@ class EditPage(PrivateLayoutView):
         next_send = now + self.panel_data['frequency_seconds']
 
         if new_state == 1:
-            await self.cog.bot.db.execute_write(
+            await self.cog.bot.db.execute(
                 "UPDATE scheduled_messages SET is_active = 1, started_at = ?, next_send_time = ? WHERE guild_id = ? AND message_id = ?",
                 (now, next_send, self.guild_id, m_id)
             )
             self.cog.message_cache[self.guild_id][m_id]["started_at"] = now
             self.cog.message_cache[self.guild_id][m_id]["next_send_time"] = next_send
         else:
-            await self.cog.bot.db.execute_write(
+            await self.cog.bot.db.execute(
                 "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
                 (self.guild_id, m_id)
             )
@@ -678,7 +679,7 @@ class EditPage(PrivateLayoutView):
 
             async def on_pick(inter: discord.Interaction, content: Optional[str], embed_obj: discord.Embed):
                 raw_embed = json.dumps(embed_obj.to_dict(), ensure_ascii=False)
-                await self.cog.bot.db.execute_write(
+                await self.cog.bot.db.execute(
                     "UPDATE scheduled_messages SET response_type = ?, message_content = NULL, embed_content = ?, embed_data = ? "
                     "WHERE guild_id = ? AND message_id = ?",
                     ("embed", content or None, raw_embed, self.guild_id, self.panel_data["message_id"]),
@@ -794,7 +795,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
     async def confirm_callback(self, interaction: discord.Interaction):
         self.value = True
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             "DELETE FROM scheduled_messages WHERE guild_id = ? AND message_id = ?",
             (self.guild_id, self.message_id)
         )
@@ -864,7 +865,8 @@ class RepeatingMessages(commands.Cog):
         total_seconds = 0
         pattern = r"(\d+(?:\.\d+)?)\s*([a-zA-Z]+)"
         matches = re.findall(pattern, frequency_str)
-        if not matches: return None
+        if not matches:
+            return None
         for number_str, unit in matches:
             try:
                 number = float(number_str)
@@ -877,7 +879,8 @@ class RepeatingMessages(commands.Cog):
         return int(total_seconds) if total_seconds > 0 else None
 
     def format_frequency(self, seconds: int) -> str:
-        if seconds < 60: return f"{seconds} second{'s' if seconds != 1 else ''}"
+        if seconds < 60:
+            return f"{seconds} second{'s' if seconds != 1 else ''}"
         units = [
             (31556952, "year", "years"), (2629746, "month", "months"),
             (604800, "week", "weeks"), (86400, "day", "days"),
@@ -889,9 +892,12 @@ class RepeatingMessages(commands.Cog):
                 count = remaining // unit_seconds
                 remaining %= unit_seconds
                 parts.append(f"{count} {singular if count == 1 else plural}")
-        if not parts: return f"{seconds} seconds"
-        if len(parts) == 1: return parts[0]
-        if len(parts) == 2: return f"{parts[0]} and {parts[1]}"
+        if not parts:
+            return f"{seconds} seconds"
+        if len(parts) == 1:
+            return parts[0]
+        if len(parts) == 2:
+            return f"{parts[0]} and {parts[1]}"
         return f"{', '.join(parts[:-1])}, and {parts[-1]}"
 
     repeating = beacon_commands.Group(name="repeating", description="Repeating Message commands", permissions_preset="automation")
@@ -921,7 +927,7 @@ class RepeatingMessages(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "repeating_messages":
             return DataDeleteResult(feature_id="repeating_messages")
-        rowcount = await self.bot.db.execute_write("DELETE FROM scheduled_messages WHERE guild_id = ?", (guild_id,))
+        rowcount = await self.bot.db.execute("DELETE FROM scheduled_messages WHERE guild_id = ?", (guild_id,))
         self.message_cache.pop(guild_id, None)
         return DataDeleteResult(feature_id="repeating_messages", deleted=True, rows_affected=rowcount)
 
@@ -944,7 +950,7 @@ class RepeatingMessages(commands.Cog):
                 continue
             if await self._channel_sendable(guild, data["channel_id"]):
                 continue
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
                 (guild.id, m_id),
             )
@@ -981,7 +987,7 @@ class RepeatingMessages(commands.Cog):
                     except Exception as e:
                         if is_access_error(e):
                             data["is_active"] = 0
-                            await self.bot.db.execute_write(
+                            await self.bot.db.execute(
                                 "UPDATE scheduled_messages SET is_active = 0 WHERE guild_id = ? AND message_id = ?",
                                 (guild_id, m_id),
                             )

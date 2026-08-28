@@ -162,7 +162,6 @@ class DiscordPhone(commands.Cog):
         self.bot.tree.add_command(self.report_ctx_menu)
 
     async def cog_load(self):
-        await self.bot.db.wait_ready()
         await self.populate_caches()
         self.bot.add_view(ReportView())
 
@@ -226,7 +225,6 @@ class DiscordPhone(commands.Cog):
                     f" [CONNECT] Connect channel {chan_b.name} from {chan_b.guild.name} to {chan_a.name} from {chan_a.guild.name}")
             return True
 
-
         return False
 
     async def increment_stat(self, table: str, id_: int, field: str):
@@ -240,7 +238,7 @@ class DiscordPhone(commands.Cog):
 
     async def _db_write(self, table: str, id_: int, field: str, new_val: int):
         t_name = f"discordphone_{table}"
-        await self.bot.db.execute_write(f"""
+        await self.bot.db.execute(f"""
             INSERT INTO {t_name} (id, reported, created, warned)
             VALUES (?, 0, 0, 0)
             ON CONFLICT(id) DO UPDATE SET {field} = ?
@@ -646,7 +644,6 @@ class DiscordPhone(commands.Cog):
         if not matched:
             self.queue.append((ctx.channel.id, ctx.author))
 
-
     @commands.command(name="skip")
     async def skip_prefix(self, ctx: commands.Context):
         now = time.time()
@@ -688,7 +685,6 @@ class DiscordPhone(commands.Cog):
         await ctx.send("Hanging up...")
         await self.end_call(call, f"Call disconnected by {ctx.author.display_name}.")
 
-
     def data_features(self) -> list[DataFeatureMeta]:
         return [DataFeatureMeta(
             feature_id="discordphone",
@@ -701,16 +697,16 @@ class DiscordPhone(commands.Cog):
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="discordphone")
-        async with self.bot.db.acquire_db() as conn:
-            rows = await export_table(conn, "SELECT * FROM discordphone_users WHERE id = ?", (user_id,))
+        async with self.bot.db.acquire_db() as db:
+            rows = await export_table(db, "SELECT * FROM discordphone_users WHERE id = ?", (user_id,))
         if rows:
             chunk.global_data["user"] = rows[0]
         return chunk
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="discordphone")
-        async with self.bot.db.acquire_db() as conn:
-            guild_rows = await export_table(conn, "SELECT * FROM discordphone_guilds WHERE id = ?", (guild_id,))
+        async with self.bot.db.acquire_db() as db:
+            guild_rows = await export_table(db, "SELECT * FROM discordphone_guilds WHERE id = ?", (guild_id,))
         chunk.guild_data[guild_id] = {
             "guild": guild_rows[0] if guild_rows else None,
         }
@@ -719,20 +715,18 @@ class DiscordPhone(commands.Cog):
     async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "discordphone":
             return DataDeleteResult(feature_id="discordphone")
-        async with self.bot.db.acquire_db() as conn:
-            cur = await conn.execute("DELETE FROM discordphone_users WHERE id = ?", (user_id,))
-            await conn.commit()
-            rows_affected = cur.rowcount
+        async with self.bot.db.acquire_db() as db:
+            rows_affected = await db.execute("DELETE FROM discordphone_users WHERE id = ?", (user_id,))
+            await db.commit()
         self.users_cache.pop(user_id, None)
         return DataDeleteResult(feature_id="discordphone", deleted=True, rows_affected=rows_affected)
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "discordphone":
             return DataDeleteResult(feature_id="discordphone")
-        async with self.bot.db.acquire_db() as conn:
-            cur = await conn.execute("DELETE FROM discordphone_guilds WHERE id = ?", (guild_id,))
-            await conn.commit()
-            rows_affected = cur.rowcount
+        async with self.bot.db.acquire_db() as db:
+            rows_affected = await db.execute("DELETE FROM discordphone_guilds WHERE id = ?", (guild_id,))
+            await db.commit()
         self.guilds_cache.pop(guild_id, None)
         return DataDeleteResult(feature_id="discordphone", deleted=True, rows_affected=rows_affected)
 

@@ -82,8 +82,6 @@ class MemberTrackerEditModal(discord.ui.Modal, title="Edit Member Tracker Settin
                 self.cog.tracker_cache[guild_id]['color'] = color_int
                 updates.append(f"Embed color set to `#{hex_value.upper()}`")
 
-            await db.commit()
-
         self.dashboard_view.build_layout()
         if interaction.response.is_done():
             await interaction.edit_original_response(view=self.dashboard_view)
@@ -146,10 +144,7 @@ class DestructiveConfirmationView(PrivateLayoutView):
     async def confirm_callback(self, interaction: discord.Interaction):
         self.value = True
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute("DELETE FROM member_tracker WHERE guild_id = ?", (interaction.guild.id,))
-            await db.commit()
-
+        await self.cog.bot.db.execute("DELETE FROM member_tracker WHERE guild_id = ?", (interaction.guild.id,))
         self.cog.tracker_cache.pop(interaction.guild.id, None)
 
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
@@ -196,15 +191,13 @@ class ChannelSelectView(PrivateLayoutView):
         count = self.guild.member_count
         default_color = 0x944ae8
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute('''
-                INSERT INTO member_tracker (guild_id, channel_id, is_active, last_member_count, color, exclude_bots)
-                VALUES (?, ?, 1, ?, ?, 0)
-                ON CONFLICT(guild_id) DO UPDATE SET
-                channel_id = excluded.channel_id,
-                is_active = 1
-            ''', (guild_id, channel_id, count, default_color))
-            await db.commit()
+        await self.cog.bot.db.execute('''
+            INSERT INTO member_tracker (guild_id, channel_id, is_active, last_member_count, color, exclude_bots)
+            VALUES (?, ?, 1, ?, ?, 0)
+            ON CONFLICT(guild_id) DO UPDATE SET
+            channel_id = excluded.channel_id,
+            is_active = 1
+        ''', (guild_id, channel_id, count, default_color))
 
         if guild_id not in self.cog.tracker_cache:
             self.cog.tracker_cache[guild_id] = {"guild_id": guild_id, "member_goal": None, "custom_format": None,
@@ -219,6 +212,7 @@ class ChannelSelectView(PrivateLayoutView):
 
         dashboard = TrackerDashboard(self.cog, self.user, self.guild)
         await interaction.response.edit_message(view=dashboard)
+
 
 class TrackerDashboard(PrivateLayoutView):
     def __init__(self, cog: "MemberCountTracker", user: discord.User, guild: discord.Guild):
@@ -272,7 +266,6 @@ class TrackerDashboard(PrivateLayoutView):
             container.add_item(discord.ui.TextDisplay(
                 """### ➤ DOCUMENTATION\n\n**Available Variables**\n* `{count}` - Current member count of your server\n* `{remaining}` - Members remaining to reach the goal\n* `{goal}` - The member goal you've set\n* `{server}` - Name of your server\n**Example Formats**\n* `🎉 {count} members! Only {remaining} more to go!`\n* `{server} reached {count}! Goal: {goal}`\n**Notes**\n* You can customize it however you want, you don't have to use these examples!\n* `{remaining}` will only work if a goal is set."""))
 
-
             edit_btn = discord.ui.Button(label="Edit Goal & Format", style=discord.ButtonStyle.primary)
             edit_btn.callback = self.edit_callback
 
@@ -287,7 +280,9 @@ class TrackerDashboard(PrivateLayoutView):
             bot_btn.callback = self.toggle_bots_callback
 
             container.add_item(discord.ui.TextDisplay("**Including/Excluding Bots**"))
-            container.add_item(discord.ui.Section(discord.ui.TextDisplay("* Use the toggle to choose whether you want to subtract bots from the total member count!"), accessory=bot_btn))
+            container.add_item(discord.ui.Section(discord.ui.TextDisplay(
+                "* Use the toggle to choose whether you want to subtract bots from the total member count!"),
+                                                  accessory=bot_btn))
             container.add_item(discord.ui.Separator())
             row = discord.ui.ActionRow()
             row.add_item(edit_btn)
@@ -319,9 +314,7 @@ class TrackerDashboard(PrivateLayoutView):
         data = self.cog.tracker_cache.get(guild_id, {})
 
         if data.get('is_active', 0):
-            async with self.cog.bot.db.acquire_db() as db:
-                await db.execute("UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild_id,))
-                await db.commit()
+            await self.cog.bot.db.execute("UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild_id,))
             if guild_id in self.cog.tracker_cache:
                 self.cog.tracker_cache[guild_id]['is_active'] = 0
             await self.update_view(interaction)
@@ -344,13 +337,11 @@ class TrackerDashboard(PrivateLayoutView):
         count = self.guild.member_count
         default_color = 0x944ae8
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute('''
-                INSERT OR REPLACE INTO member_tracker 
-                (guild_id, channel_id, is_active, last_member_count, color, exclude_bots)
-                VALUES (?, ?, 1, ?, ?, 0)
-            ''', (guild_id, channel_id, count, default_color))
-            await db.commit()
+        await self.cog.bot.db.execute('''
+            INSERT OR REPLACE INTO member_tracker 
+            (guild_id, channel_id, is_active, last_member_count, color, exclude_bots)
+            VALUES (?, ?, 1, ?, ?, 0)
+        ''', (guild_id, channel_id, count, default_color))
 
         self.cog.tracker_cache[guild_id] = {
             "guild_id": guild_id,
@@ -378,12 +369,10 @@ class TrackerDashboard(PrivateLayoutView):
         else:
             new_count = self.guild.member_count
 
-        async with self.cog.bot.db.acquire_db() as db:
-            await db.execute(
-                "UPDATE member_tracker SET exclude_bots = ?, last_member_count = ? WHERE guild_id = ?",
-                (new_setting, new_count, guild_id)
-            )
-            await db.commit()
+        await self.cog.bot.db.execute(
+            "UPDATE member_tracker SET exclude_bots = ?, last_member_count = ? WHERE guild_id = ?",
+            (new_setting, new_count, guild_id)
+        )
 
         self.cog.tracker_cache[guild_id]['exclude_bots'] = new_setting
         self.cog.tracker_cache[guild_id]['last_member_count'] = new_count
@@ -420,20 +409,18 @@ class MemberCountTracker(commands.Cog):
 
     async def populate_caches(self):
         self.tracker_cache.clear()
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT * FROM member_tracker WHERE is_active = 1") as cursor:
-                rows = cursor.fetchall()
-                if rows:
-                    columns = [column[0] for column in cursor.description]
-                    for row in rows:
-                        data = dict(zip(columns, row))
-                        self.tracker_cache[data["guild_id"]] = data
+        rows = await self.bot.db.execute("SELECT * FROM member_tracker WHERE is_active = 1")
+        if rows:
+            for row in rows:
+                self.tracker_cache[row["guild_id"]] = row
 
     async def check_vote_access(self, user_id: int) -> bool:
         voter_cog = self.bot.get_cog('TopGGVoter')
         return await voter_cog.check_vote_access(user_id) if voter_cog else True
 
-    member = beacon_commands.Group(name="member", description="Member Tracker commands", permissions_preset="automation")
+    member = beacon_commands.Group(name="member", description="Member Tracker commands",
+                                   permissions_preset="automation")
+
     @member.command(name="tracker", description="Open the dashboard for Member Tracker.")
     async def member_tracker_dashboard(self, interaction: discord.Interaction):
         view = TrackerDashboard(self, interaction.user, interaction.guild)
@@ -461,7 +448,7 @@ class MemberCountTracker(commands.Cog):
 
             if current_count is None:
                 continue
-                
+
             if current_count <= last_count:
                 continue
 
@@ -493,26 +480,27 @@ class MemberCountTracker(commands.Cog):
             try:
                 await channel.send(embed=embed)
 
-                async with self.bot.db.acquire_db() as db:
-                    if goal and current_count >= goal:
-                        await channel.send(
-                            embed=discord.Embed(description=f"Congratulations! Goal of **{goal}** members has been reached! 🎉", color=discord.Color.gold()))
-                        await db.execute(
-                            "UPDATE member_tracker SET is_active = 0, last_member_count = ? WHERE guild_id = ?",
-                            (current_count, guild_id))
-                        self.tracker_cache.pop(guild_id, None)
-                    else:
-                        await db.execute("UPDATE member_tracker SET last_member_count = ? WHERE guild_id = ?",
-                                         (current_count, guild_id))
-                        self.tracker_cache[guild_id]['last_member_count'] = current_count
-                    await db.commit()
+                if goal and current_count >= goal:
+                    await channel.send(
+                        embed=discord.Embed(
+                            description=f"Congratulations! Goal of **{goal}** members has been reached! 🎉",
+                            color=discord.Color.gold()))
+                    await self.bot.db.execute(
+                        "UPDATE member_tracker SET is_active = 0, last_member_count = ? WHERE guild_id = ?",
+                        (current_count, guild_id))
+                    self.tracker_cache.pop(guild_id, None)
+                else:
+                    await self.bot.db.execute("UPDATE member_tracker SET last_member_count = ? WHERE guild_id = ?",
+                                              (current_count, guild_id))
+                    self.tracker_cache[guild_id]['last_member_count'] = current_count
             except Exception as e:
                 if is_access_error(e):
                     await report_access_failure(self.bot, guild_id, "member_tracker")
 
     def data_features(self) -> list:
         from utils.data_protocol import DataFeatureMeta
-        return [DataFeatureMeta(feature_id="member_tracker", name="Member Tracker", guild_export=True, guild_delete=True)]
+        return [
+            DataFeatureMeta(feature_id="member_tracker", name="Member Tracker", guild_export=True, guild_delete=True)]
 
     async def data_export_user(self, user_id: int, *, guild_ids: list[int] | None):
         from utils.data_protocol import DataExportChunk
@@ -534,11 +522,12 @@ class MemberCountTracker(commands.Cog):
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None):
         from utils.data_protocol import DataDeleteResult
-        async with self.bot.db.acquire_db() as db:
-            cur = await db.execute("DELETE FROM member_tracker WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+        result = await self.bot.db.execute("DELETE FROM member_tracker WHERE guild_id = ?", (guild_id,))
         self.tracker_cache.pop(guild_id, None)
-        return DataDeleteResult(feature_id="member_tracker", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="member_tracker", deleted=True,
+                                rows_affected=result.rowcount if hasattr(result, 'rowcount') else getattr(result,
+                                                                                                          'affected_rows',
+                                                                                                          0))
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult
@@ -548,11 +537,9 @@ class MemberCountTracker(commands.Cog):
             return result
         channel_id = data.get("channel_id")
         if not channel_id:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute(
-                    "UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild.id,)
-                )
-                await db.commit()
+            await self.bot.db.execute(
+                "UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild.id,)
+            )
             self.tracker_cache.pop(guild.id, None)
             result.actions.append("disabled_member_tracker")
             return result
@@ -561,11 +548,9 @@ class MemberCountTracker(commands.Cog):
         )
         if channel and channel_can_send(channel, guild):
             return result
-        async with self.bot.db.acquire_db() as db:
-            await db.execute(
-                "UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild.id,)
-            )
-            await db.commit()
+        await self.bot.db.execute(
+            "UPDATE member_tracker SET is_active = 0 WHERE guild_id = ?", (guild.id,)
+        )
         self.tracker_cache.pop(guild.id, None)
         result.actions.append("disabled_member_tracker")
         return result

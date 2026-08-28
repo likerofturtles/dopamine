@@ -3,7 +3,6 @@ import ctypes
 import io
 import os
 import re
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -110,7 +109,8 @@ class LeaveImageModal(discord.ui.Modal, title="Customise Card Text"):
                 discord.RadioGroupOption(label="None", value="none", default=(text_border_val == "none")),
                 discord.RadioGroupOption(label="White Border", value="white", default=(text_border_val == "white")),
                 discord.RadioGroupOption(label="Black Border", value="black", default=(text_border_val == "black")),
-                discord.RadioGroupOption(label="Opposite Border", value="opposite", default=(text_border_val == "opposite"))
+                discord.RadioGroupOption(label="Opposite Border", value="opposite",
+                                         default=(text_border_val == "opposite"))
             ],
             required=True
         )
@@ -233,8 +233,8 @@ class LeaveDashboardView(PrivateLayoutView):
         async with self.cog.bot.db.acquire_db() as db:
             columns = ", ".join(f"{k} = ?" for k in kwargs.keys())
             values = list(kwargs.values())
-            cursor = await db.execute("SELECT 1 FROM leave_settings WHERE guild_id = ?", (self.guild_id,))
-            if not cursor.fetchone():
+            existing = await db.execute("SELECT 1 FROM leave_settings WHERE guild_id = ?", (self.guild_id,))
+            if not existing:
                 await db.execute("INSERT INTO leave_settings (guild_id) VALUES (?)", (self.guild_id,))
 
             await db.execute(f"UPDATE leave_settings SET {columns} WHERE guild_id = ?", (*values, self.guild_id))
@@ -331,7 +331,8 @@ class LeaveDashboardView(PrivateLayoutView):
     async def open_background_modal(self, interaction: discord.Interaction):
         await interaction.response.send_modal(LeaveBackgroundModal(self.background_modal_callback))
 
-    async def background_modal_callback(self, interaction: discord.Interaction, attachment: Optional[discord.Attachment]):
+    async def background_modal_callback(self, interaction: discord.Interaction,
+                                        attachment: Optional[discord.Attachment]):
         if not attachment:
             return await interaction.response.send_message("No background image file uploaded.", ephemeral=True)
 
@@ -401,15 +402,13 @@ class LeaveDashboardView(PrivateLayoutView):
                 except Exception as e:
                     print(f"Error purging file assets during reset: {e}")
 
-            async with self.cog.bot.db.acquire_db() as db:
-                await db.execute("""
-                    UPDATE leave_settings 
-                    SET custom_message=NULL, custom_line1=NULL, custom_line2=NULL, 
-                        image_url=NULL, local_image_path=NULL, embed_color=NULL,
-                        text_bg_opacity='none', text_border='none', show_text=1, show_image=1 
-                    WHERE guild_id=?
-                """, (self.guild_id,))
-                await db.commit()
+            await self.bot.db.execute("""
+                UPDATE leave_settings 
+                SET custom_message=NULL, custom_line1=NULL, custom_line2=NULL, 
+                    image_url=NULL, local_image_path=NULL, embed_color=NULL,
+                    text_bg_opacity='none', text_border='none', show_text=1, show_image=1 
+                WHERE guild_id=?
+            """, (self.guild_id,))
 
             if self.guild_id in self.cog.leave_cache:
                 saved_channel = self.cog.leave_cache[self.guild_id].get("channel_id")
@@ -596,44 +595,41 @@ class Leaves(commands.Cog):
         storage_dir = Path("databases/leave_backgrounds")
         storage_dir.mkdir(parents=True, exist_ok=True)
 
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute(
-                    "SELECT guild_id, image_url FROM leave_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL") as cursor:
-                rows = cursor.fetchall()
+        rows = await self.bot.db.execute(
+            "SELECT guild_id, image_url FROM leave_settings WHERE image_url IS NOT NULL AND local_image_path IS NULL"
+        )
 
-            if not rows:
-                return
+        if not rows:
+            return
 
-            print(f"[Migration] Migrating {len(rows)} legacy leave background URL profiles...")
-            async with aiohttp.ClientSession() as session:
-                for guild_id, url in rows:
-                    raw_bytes = await fetch_image(session, url)
-                    if not raw_bytes:
-                        continue
+        print(f"[Migration] Migrating {len(rows)} legacy leave background URL profiles...")
+        async with aiohttp.ClientSession() as session:
+            for row in rows:
+                guild_id = row["guild_id"]
+                url = row["image_url"]
+                raw_bytes = await fetch_image(session, url)
+                if not raw_bytes:
+                    continue
 
-                    try:
-                        img = pyvips.Image.new_from_buffer(raw_bytes, "")
-                        local_path = storage_dir / f"bg_{guild_id}.jpg"
-                        img.write_to_file(str(local_path), Q=85)
+                try:
+                    img = pyvips.Image.new_from_buffer(raw_bytes, "")
+                    local_path = storage_dir / f"bg_{guild_id}.jpg"
+                    img.write_to_file(str(local_path), Q=85)
 
-                        await db.execute(
-                            "UPDATE leave_settings SET local_image_path = ?, image_url = NULL WHERE guild_id = ?",
-                            (str(local_path), guild_id)
-                        )
-                        await db.commit()
-                    except Exception as e:
-                        print(
-                            f"[Migration Failure] Couldn't compress/migrate legacy asset configurations for server {guild_id}: {e}")
+                    await self.bot.db.execute(
+                        "UPDATE leave_settings SET local_image_path = ?, image_url = NULL WHERE guild_id = ?",
+                        (str(local_path), guild_id)
+                    )
+                except Exception as e:
+                    print(
+                        f"[Migration Failure] Couldn't compress/migrate legacy asset configurations for server {guild_id}: {e}"
+                    )
 
     async def populate_caches(self):
         self.leave_cache.clear()
-        async with self.bot.db.acquire_db() as db:
-            async with db.execute("SELECT * FROM leave_settings") as cursor:
-                rows = cursor.fetchall()
-                columns = [column[0] for column in cursor.description]
-                for row in rows:
-                    data = dict(zip(columns, row))
-                    self.leave_cache[data["guild_id"]] = data
+        rows = await self.bot.db.execute("SELECT * FROM leave_settings")
+        for row in rows:
+            self.leave_cache[row["guild_id"]] = dict(row)
 
     def get_background_image(self, guild_id: int, local_image_path: Optional[str]) -> pyvips.Image:
         if guild_id in self.image_bytes_cache:
@@ -906,14 +902,13 @@ class Leaves(commands.Cog):
         import os
         from pathlib import Path
         from utils.data_protocol import DataDeleteResult
-        async with self.bot.db.acquire_db() as db:
-            cur = await db.execute("DELETE FROM leave_settings WHERE guild_id = ?", (guild_id,))
-            await db.commit()
+
+        affected = await self.bot.db.execute("DELETE FROM leave_settings WHERE guild_id = ?", (guild_id,))
         self.leave_cache.pop(guild_id, None)
         bg = Path("databases/leave_backgrounds") / f"{guild_id}.jpg"
         if bg.is_file():
             os.remove(bg)
-        return DataDeleteResult(feature_id="leave", deleted=True, rows_affected=cur.rowcount)
+        return DataDeleteResult(feature_id="leave", deleted=True, rows_affected=affected)
 
     async def data_monitor_guild(self, guild: discord.Guild):
         from utils.data_protocol import DataMonitorResult
@@ -924,11 +919,9 @@ class Leaves(commands.Cog):
         channel_id = data.get("channel_id")
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel or not channel.permissions_for(guild.me).send_messages:
-            async with self.bot.db.acquire_db() as db:
-                await db.execute(
-                    "UPDATE leave_settings SET is_enabled = 0 WHERE guild_id = ?", (guild.id,)
-                )
-                await db.commit()
+            await self.bot.db.execute(
+                "UPDATE leave_settings SET is_enabled = 0 WHERE guild_id = ?", (guild.id,)
+            )
             if guild.id in self.leave_cache:
                 self.leave_cache[guild.id]["is_enabled"] = 0
             result.actions.append("disabled_leave")

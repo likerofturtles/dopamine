@@ -44,7 +44,7 @@ class PlaceholderModal(discord.ui.Modal, title="Change Placeholder Text"):
     async def on_submit(self, interaction: discord.Interaction):
         new_text = self.placeholder_input.value
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             'UPDATE serversettings SET placeholder = ? WHERE guild_id = ?',
             (new_text, self.guild_id)
         )
@@ -89,7 +89,7 @@ class NicknameModeratorView(discord.ui.View):
         settings = self.cog.serversettingscache.get(self.guild_id, {})
         new_state = not settings.get('profanity_filter', False)
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             'UPDATE serversettings SET profanity_filter = ? WHERE guild_id = ?',
             (int(new_state), self.guild_id)
         )
@@ -107,7 +107,7 @@ class NicknameModeratorView(discord.ui.View):
         settings = self.cog.serversettingscache.get(self.guild_id, {})
         new_state = not settings.get('symbol_filter', False)
 
-        await self.cog.bot.db.execute_write(
+        await self.cog.bot.db.execute(
             'UPDATE serversettings SET symbol_filter = ? WHERE guild_id = ?',
             (int(new_state), self.guild_id)
         )
@@ -402,7 +402,7 @@ class Nickname(commands.Cog):
         new_status = not is_verified
 
         if is_verified:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 'DELETE FROM verified WHERE guild_id = ? AND user_id = ?',
                 (guild_id, user_id),
             )
@@ -413,7 +413,7 @@ class Nickname(commands.Cog):
                 colour=discord.Color.green()
             )
         else:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 'INSERT OR IGNORE INTO verified (guild_id, user_id) VALUES (?, ?)',
                 (guild_id, user_id),
             )
@@ -432,7 +432,7 @@ class Nickname(commands.Cog):
         guild_id = interaction.guild.id
 
         if guild_id not in self.serversettingscache:
-            await self.bot.db.execute_write(
+            await self.bot.db.execute(
                 'INSERT OR IGNORE INTO serversettings (guild_id) VALUES (?)',
                 (guild_id,)
             )
@@ -536,7 +536,7 @@ class Nickname(commands.Cog):
                 color=discord.Color.red()
             ))
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             'UPDATE serversettings SET last_scan = ? WHERE guild_id = ?',
             (now, guild_id)
         )
@@ -615,14 +615,13 @@ class Nickname(commands.Cog):
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
             if guild_ids is None:
-                cur = await db.execute("DELETE FROM verified WHERE user_id = ?", (user_id,))
+                rows_affected = await db.execute("DELETE FROM verified WHERE user_id = ?", (user_id,))
             else:
                 placeholders = ",".join("?" * len(guild_ids))
-                cur = await db.execute(
+                rows_affected = await db.execute(
                     f"DELETE FROM verified WHERE user_id = ? AND guild_id IN ({placeholders})",
                     (user_id, *guild_ids),
                 )
-            rows_affected = cur.rowcount
             await db.commit()
         if guild_ids is None:
             for gid in list(self.verifiedcache):
@@ -638,10 +637,8 @@ class Nickname(commands.Cog):
             return DataDeleteResult(feature_id="nickname")
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
-            cur = await db.execute("DELETE FROM verified WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
-            cur = await db.execute("DELETE FROM serversettings WHERE guild_id = ?", (guild_id,))
-            rows_affected += cur.rowcount
+            rows_affected += await db.execute("DELETE FROM verified WHERE guild_id = ?", (guild_id,))
+            rows_affected += await db.execute("DELETE FROM serversettings WHERE guild_id = ?", (guild_id,))
             await db.commit()
         self.verifiedcache.pop(guild_id, None)
         self.serversettingscache.pop(guild_id, None)

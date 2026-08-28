@@ -301,7 +301,8 @@ class HaikuDetector(commands.Cog):
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="haiku")
         settings = await self.bot.db.execute(
-            "SELECT * FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+            "SELECT * FROM haiku_settings WHERE guild_id = ?", (guild_id,)
+        )
         chunk.guild_data[guild_id] = {"haiku_settings": settings}
         return chunk
 
@@ -311,10 +312,15 @@ class HaikuDetector(commands.Cog):
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "haiku":
             return DataDeleteResult(feature_id="haiku")
-        count_rows = await self.bot.db.execute(
-            "SELECT COUNT(*) AS cnt FROM haiku_settings WHERE guild_id = ?", (guild_id,))
-        rows_affected = count_rows[0]["cnt"] if count_rows else 0
-        await self.bot.db.execute_write("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+
+        async with self.bot.db.acquire_db() as db:
+            count_rows = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM haiku_settings WHERE guild_id = ?", (guild_id,)
+            )
+            rows_affected = count_rows[0]["cnt"] if count_rows else 0
+            await db.execute("DELETE FROM haiku_settings WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+
         self.enabled_guilds.discard(guild_id)
         return DataDeleteResult(feature_id="haiku", deleted=True, rows_affected=rows_affected)
 
@@ -344,7 +350,7 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR REPLACE INTO haiku_settings (guild_id, is_enabled) VALUES (?, 1)",
             (interaction.guild.id,)
         )
@@ -370,7 +376,10 @@ class HaikuDetector(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        await self.bot.db.execute_write("UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?", (interaction.guild.id,))
+        await self.bot.db.execute(
+            "UPDATE haiku_settings SET is_enabled = 0 WHERE guild_id = ?",
+            (interaction.guild.id,)
+        )
         self.enabled_guilds.discard(interaction.guild.id)
 
         embed = discord.Embed(
@@ -393,6 +402,7 @@ class HaikuDetector(commands.Cog):
 
         try:
             entries = [entry.strip() for entry in data.split(',')]
+            records_to_insert = []
             added_words = []
 
             for entry in entries:
@@ -405,16 +415,22 @@ class HaikuDetector(commands.Cog):
                 try:
                     word = parts[0].lower().replace("'", "")
                     syllables = int(parts[1])
-                    await self.bot.db.execute_write(
-                        'INSERT OR REPLACE INTO haiku_words (word, syllables) VALUES (?, ?)',
-                        (word, syllables),
-                    )
-                    self.haiku_word_cache[word] = syllables
+                    records_to_insert.append((word, syllables))
                     added_words.append(f"{word}: {syllables} syllables")
                 except ValueError:
                     continue
 
-            if added_words:
+            if records_to_insert:
+                async with self.bot.db.acquire_db() as db:
+                    await db.executemany(
+                        'INSERT OR REPLACE INTO haiku_words (word, syllables) VALUES (?, ?)',
+                        records_to_insert,
+                    )
+                    await db.commit()
+
+                for word, syllables in records_to_insert:
+                    self.haiku_word_cache[word] = syllables
+
                 embed = discord.Embed(
                     title="Haiku Database Updated",
                     description=f"Successfully added/updated {len(added_words)} words:\n\n" +

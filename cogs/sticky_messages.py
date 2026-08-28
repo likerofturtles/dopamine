@@ -210,7 +210,7 @@ class EditPage(PrivateLayoutView):
             async def on_pick(inter: discord.Interaction, content: Optional[str], embed_obj: discord.Embed):
                 raw_embed = json.dumps(embed_obj.to_dict(), ensure_ascii=False)
                 title = self.panel_data["title"]
-                await self.cog.bot.db.execute_write(
+                await self.cog.bot.db.execute(
                     "UPDATE sticky_panels SET response_type = ?, response_text = NULL, embed_content = ?, embed_data = ? "
                     "WHERE guild_id = ? AND title = ?",
                     ("embed", content or None, raw_embed, self.guild_id, title),
@@ -263,8 +263,8 @@ class EditPage(PrivateLayoutView):
 
         new_val = 0 if panel.get('include_bots', 1) else 1
 
-        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET include_bots = ? WHERE guild_id = ? AND title = ?",
-                                          (new_val, self.guild_id, title))
+        await self.cog.bot.db.execute("UPDATE sticky_panels SET include_bots = ? WHERE guild_id = ? AND title = ?",
+                                     (new_val, self.guild_id, title))
 
         panel['include_bots'] = new_val
         self.panel_data['include_bots'] = new_val
@@ -278,8 +278,8 @@ class EditPage(PrivateLayoutView):
 
         new_mode = "One Shot" if panel.get('conv_mode', 'Dynamic') == "Dynamic" else "Dynamic"
 
-        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET conv_mode = ? WHERE guild_id = ? AND title = ?",
-                                          (new_mode, self.guild_id, title))
+        await self.cog.bot.db.execute("UPDATE sticky_panels SET conv_mode = ? WHERE guild_id = ? AND title = ?",
+                                     (new_mode, self.guild_id, title))
 
         panel['conv_mode'] = new_mode
         self.panel_data['conv_mode'] = new_mode
@@ -466,7 +466,7 @@ class ChannelSelectView(PrivateLayoutView):
             old_channel_id = panel['channel_id']
             panel['channel_id'] = selected_channel.id
 
-            await self.cog.bot.db.execute_write(
+            await self.cog.bot.db.execute(
                 "UPDATE sticky_panels SET channel_id = ?, last_message_id = NULL WHERE guild_id = ? AND title = ?",
                 (selected_channel.id, self.guild_id, self.panel_title)
             )
@@ -476,7 +476,6 @@ class ChannelSelectView(PrivateLayoutView):
 
             await interaction.response.send_message(
                 content=f"Moved **{self.panel_title}** to {selected_channel.mention}", ephemeral=True)
-
 
             new_channel = self.cog.bot.get_channel(selected_channel.id) or await self.cog.bot.fetch_channel(selected_channel.id)
             if new_channel:
@@ -562,7 +561,6 @@ class StickyDashboard(PrivateLayoutView):
     def build_layout(self):
         self.clear_items()
         has_panels = len(self.panels) > 0
-        bots_enabled = self.panels[0].get('include_bots', 1) == 1 if has_panels else True
 
         container = discord.ui.Container()
         container.add_item(discord.ui.TextDisplay("## Sticky Messages Dashboard"))
@@ -640,8 +638,8 @@ class DurationModal(discord.ui.Modal):
         except ValueError:
             return await interaction.response.send_message("Enter a number between 0 and 60.", ephemeral=True)
 
-        await self.cog.bot.db.execute_write("UPDATE sticky_panels SET conversation_duration = ? WHERE guild_id = ? AND title = ?",
-                                          (val, self.guild_id, self.title_name))
+        await self.cog.bot.db.execute("UPDATE sticky_panels SET conversation_duration = ? WHERE guild_id = ? AND title = ?",
+                                     (val, self.guild_id, self.title_name))
 
         self.cog.panel_cache[self.guild_id][self.title_name]['conversation_duration'] = val
         self.parent_view.panel_data['conversation_duration'] = val
@@ -691,7 +689,7 @@ class StickyTextSetupModal(discord.ui.Modal):
                 await interaction.response.send_message("Sticky message not found.", ephemeral=True)
                 return
 
-            await self.cog.bot.db.execute_write(
+            await self.cog.bot.db.execute(
                 "UPDATE sticky_panels SET title = ?, response_type = ?, response_text = ?, embed_content = NULL, embed_data = NULL "
                 "WHERE guild_id = ? AND title = ?",
                 (title, "text", response_text, self.guild_id, self.original_title),
@@ -730,7 +728,7 @@ class StickyTextSetupModal(discord.ui.Modal):
 
         cols = ", ".join(data.keys())
         placeholders = ", ".join(["?"] * len(data))
-        await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
+        await self.cog.bot.db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
 
         self.cog.panel_cache.setdefault(self.guild_id, {})[title] = data
         self.cog.active_channels[self.channel_id] = data
@@ -781,7 +779,7 @@ class StickyEmbedNameModal(discord.ui.Modal):
 
         cols = ", ".join(data.keys())
         placeholders = ", ".join(["?"] * len(data))
-        await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
+        await self.cog.bot.db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
 
         cache_data = dict(data)
         cache_data["embed_data"] = self.embed_data
@@ -865,7 +863,7 @@ class StickySetupModal(discord.ui.Modal):
                 self.cog.panel_cache[self.guild_id][title] = self.cog.panel_cache[self.guild_id].pop(
                     self.original_title)
 
-            await self.cog.bot.db.execute_write("""UPDATE sticky_panels SET title=?, description=?, footer=?, image_url=?, embed_color=?
+            await self.cog.bot.db.execute("""UPDATE sticky_panels SET title=?, description=?, footer=?, image_url=?, embed_color=?
                                 WHERE guild_id=? AND title=?""",
                              (title, panel['description'], panel['footer'], panel['image_url'], color_val,
                               self.guild_id, self.original_title))
@@ -874,7 +872,7 @@ class StickySetupModal(discord.ui.Modal):
         else:
             cols = ", ".join(data.keys())
             placeholders = ", ".join(["?"] * len(data))
-            await self.cog.bot.db.execute_write(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
+            await self.cog.bot.db.execute(f"INSERT INTO sticky_panels ({cols}) VALUES ({placeholders})", list(data.values()))
             msg = f"Sticky message **{title}** created!"
 
         if self.guild_id not in self.cog.panel_cache: self.cog.panel_cache[self.guild_id] = {}
@@ -895,7 +893,6 @@ class StickyMessages(commands.Cog):
         self.sticky_tasks: Dict[int, asyncio.Task] = {}
 
     async def cog_load(self):
-        await self.bot.db.wait_ready()
         await self.populate_caches()
         if not self.sticky_monitor.is_running(): self.sticky_monitor.start()
 
@@ -929,7 +926,7 @@ class StickyMessages(commands.Cog):
         if not panel:
             return
         self.active_channels.pop(panel['channel_id'], None)
-        await self.bot.db.execute_write("DELETE FROM sticky_panels WHERE guild_id = ? AND title = ?", (guild_id, title))
+        await self.bot.db.execute("DELETE FROM sticky_panels WHERE guild_id = ? AND title = ?", (guild_id, title))
 
     def build_panel_embed(self, data: dict) -> discord.Embed:
         color = parse_color(data.get('embed_color', ''))
@@ -1000,8 +997,8 @@ class StickyMessages(commands.Cog):
                 new_msg = await channel.send(content=panel.get("embed_content"), embed=embed_obj)
             else:
                 new_msg = await channel.send(embed=self.build_panel_embed(panel))
-            await self.bot.db.execute_write("UPDATE sticky_panels SET last_message_id = ? WHERE guild_id = ? AND title = ?",
-                                          (new_msg.id, panel['guild_id'], panel['title']))
+            await self.bot.db.execute("UPDATE sticky_panels SET last_message_id = ? WHERE guild_id = ? AND title = ?",
+                                     (new_msg.id, panel['guild_id'], panel['title']))
             panel['last_message_id'] = new_msg.id
         except Exception as e:
             if is_access_error(e):
@@ -1052,7 +1049,7 @@ class StickyMessages(commands.Cog):
         if feature_id and feature_id != "sticky_messages":
             return DataDeleteResult(feature_id="sticky_messages")
         panels = list(self.panel_cache.get(guild_id, {}).keys())
-        rows_affected = await self.bot.db.execute_write("DELETE FROM sticky_panels WHERE guild_id = ?", (guild_id,))
+        rows_affected = await self.bot.db.execute("DELETE FROM sticky_panels WHERE guild_id = ?", (guild_id,))
         for title in panels:
             panel = self.panel_cache.get(guild_id, {}).pop(title, None)
             if panel:

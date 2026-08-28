@@ -28,6 +28,7 @@ COMMON_TIMEZONES = [
     "Asia/Singapore", "Asia/Tokyo", "Asia/Sydney", "Australia/Melbourne"
 ]
 
+
 class DestructiveConfirmationView(PrivateLayoutView):
     def __init__(self, title_text: str, body_text: str, color: discord.Color | None = None):
         super().__init__(timeout=30)
@@ -105,17 +106,20 @@ class ScheduledSlowmode(commands.Cog):
     async def populate_caches(self):
         self._schedule_cache.clear()
         rows = await self.bot.db.execute(
-            'SELECT channel_id, start_min_utc, end_min_utc, delay_seconds FROM slowmode_schedules')
+            'SELECT channel_id, start_min_utc, end_min_utc, delay_seconds FROM slowmode_schedules'
+        )
         for row in rows:
             cid = row["channel_id"]
             if cid not in self._schedule_cache:
                 self._schedule_cache[cid] = []
             self._schedule_cache[cid].append(
-                (row["start_min_utc"], row["end_min_utc"], row["delay_seconds"]))
+                (row["start_min_utc"], row["end_min_utc"], row["delay_seconds"])
+            )
 
     async def check_vote_access(self, user_id: int) -> bool:
         voter_cog = self.bot.get_cog('TopGGVoter')
-        if not voter_cog: return True
+        if not voter_cog:
+            return True
         return await voter_cog.check_vote_access(user_id)
 
     def parse_time_str(self, time_str: str) -> time | None:
@@ -174,7 +178,7 @@ class ScheduledSlowmode(commands.Cog):
 
     slowmode_group = app_commands.Group(name="slowmode", description="Manage scheduled slowmode")
     schedule_group = beacon_commands.Group(name="schedule", description="Configure slowmode schedules",
-                                         parent=slowmode_group, permissions_preset="manager")
+                                           parent=slowmode_group, permissions_preset="manager")
 
     @slowmode_group.command(name="configure", description="Directly configure slowmode for a channel.")
     @app_commands.describe(channel="The channel to configure slowmode for",
@@ -244,10 +248,10 @@ class ScheduledSlowmode(commands.Cog):
                                                                ephemeral=True)
 
         async with self.lock:
-            await self.bot.db.execute_write('''
+            await self.bot.db.execute('''
                 INSERT INTO slowmode_schedules (guild_id, channel_id, delay_seconds, start_min_utc, end_min_utc)
                 VALUES (?, ?, ?, ?, ?)
-                ''', (interaction.guild.id, channel.id, interval, utc_start, utc_end))
+            ''', (interaction.guild.id, channel.id, interval, utc_start, utc_end))
 
             if channel.id not in self._schedule_cache:
                 self._schedule_cache[channel.id] = []
@@ -277,15 +281,16 @@ class ScheduledSlowmode(commands.Cog):
 
         if view.value is True:
             async with self.lock:
-                await self.bot.db.execute_write(
-                    "DELETE FROM slowmode_schedules WHERE channel_id = ?", (channel.id,))
+                await self.bot.db.execute(
+                    "DELETE FROM slowmode_schedules WHERE channel_id = ?", (channel.id,)
+                )
 
                 if channel.id in self._schedule_cache:
                     del self._schedule_cache[channel.id]
 
             try:
                 await channel.edit(slowmode_delay=0)
-            except:
+            except Exception:
                 pass
 
     @tasks.loop(seconds=60)
@@ -307,7 +312,7 @@ class ScheduledSlowmode(commands.Cog):
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 if channel and channel.slowmode_delay != target_delay:
                     await channel.edit(slowmode_delay=target_delay)
-            except (discord.Forbidden, discord.NotFound) as e:
+            except (discord.Forbidden, discord.NotFound):
                 from utils.discord_health import report_access_failure
                 ch = self.bot.get_channel(channel_id)
                 gid = ch.guild.id if ch else None
@@ -342,23 +347,32 @@ class ScheduledSlowmode(commands.Cog):
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
         chunk = DataExportChunk(feature_id="slowmode")
         rows = await export_table(
-            self.bot.db, "SELECT * FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
+            self.bot.db, "SELECT * FROM slowmode_schedules WHERE guild_id = ?", (guild_id,)
+        )
         chunk.guild_data[guild_id] = {"slowmode_schedules": rows}
         return chunk
 
-    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
+    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None,
+                               feature_id: str | None) -> DataDeleteResult:
         return DataDeleteResult(feature_id="slowmode")
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
         if feature_id and feature_id != "slowmode":
             return DataDeleteResult(feature_id="slowmode")
-        rows = await self.bot.db.execute(
-            "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
-        channel_ids = [row["channel_id"] for row in rows]
-        rows_affected = await self.bot.db.execute_write(
-            "DELETE FROM slowmode_schedules WHERE guild_id = ?", (guild_id,))
+
+        async with self.bot.db.acquire_db() as db:
+            rows = await db.execute(
+                "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild_id,)
+            )
+            channel_ids = [row["channel_id"] for row in rows]
+            rows_affected = await db.execute(
+                "DELETE FROM slowmode_schedules WHERE guild_id = ?", (guild_id,)
+            )
+            await db.commit()
+
         for cid in channel_ids:
             self._schedule_cache.pop(cid, None)
+
         return DataDeleteResult(feature_id="slowmode", deleted=True, rows_affected=rows_affected)
 
     async def _channel_manageable(self, guild: discord.Guild, channel_id: int) -> bool:
@@ -376,17 +390,23 @@ class ScheduledSlowmode(commands.Cog):
     async def data_monitor_guild(self, guild: discord.Guild) -> DataMonitorResult:
         result = DataMonitorResult(feature_id="slowmode")
         rows = await self.bot.db.execute(
-            "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild.id,))
+            "SELECT DISTINCT channel_id FROM slowmode_schedules WHERE guild_id = ?", (guild.id,)
+        )
         channel_ids = [row["channel_id"] for row in rows]
-        for channel_id in channel_ids:
-            if await self._channel_manageable(guild, channel_id):
-                continue
-            await self.bot.db.execute_write(
-                "DELETE FROM slowmode_schedules WHERE guild_id = ? AND channel_id = ?",
-                (guild.id, channel_id),
-            )
-            self._schedule_cache.pop(channel_id, None)
-            result.actions.append(f"removed_schedules:{channel_id}")
+
+        unmanageable_ids = [cid for cid in channel_ids if not await self._channel_manageable(guild, cid)]
+
+        if unmanageable_ids:
+            async with self.bot.db.acquire_db() as db:
+                for channel_id in unmanageable_ids:
+                    await db.execute(
+                        "DELETE FROM slowmode_schedules WHERE guild_id = ? AND channel_id = ?",
+                        (guild.id, channel_id),
+                    )
+                    self._schedule_cache.pop(channel_id, None)
+                    result.actions.append(f"removed_schedules:{channel_id}")
+                await db.commit()
+
         return result
 
 

@@ -64,8 +64,9 @@ class ConfirmationView(PrivateLayoutView):
         guild_id = interaction.guild_id
 
         self.cog.cache_settings[guild_id] = True
-        await self.cog.bot.db.execute_write(
-            "INSERT OR REPLACE INTO selfpurge_guild_settings (guild_id, enabled) VALUES (?, 1)", (guild_id,))
+        await self.cog.bot.db.execute(
+            "INSERT OR REPLACE INTO selfpurge_guild_settings (guild_id, enabled) VALUES (?, 1)", (guild_id,)
+        )
         await self.update_view(interaction, "Action Confirmed", discord.Color.green())
 
     async def on_timeout(self, interaction: discord.Interaction):
@@ -82,13 +83,13 @@ class SelfPurge(commands.Cog):
 
     async def cog_load(self):
         await self.bot.db.wait_ready()
-        settings = await self.bot.db.execute(
-            "SELECT guild_id, enabled FROM selfpurge_guild_settings")
+        async with self.bot.db.acquire_db() as db:
+            settings = await db.execute("SELECT guild_id, enabled FROM selfpurge_guild_settings")
+            purges = await db.execute("SELECT guild_id, user_id, execute_at FROM scheduled_purges")
+
         for row in settings:
             self.cache_settings[row["guild_id"]] = bool(row["enabled"])
 
-        purges = await self.bot.db.execute(
-            "SELECT guild_id, user_id, execute_at FROM scheduled_purges")
         for row in purges:
             self.cache_purges[(row["guild_id"], row["user_id"])] = row["execute_at"]
 
@@ -107,8 +108,9 @@ class SelfPurge(commands.Cog):
         if not self.cache_settings[guild_id]:
             return await interaction.response.send_message("Self purge feature is already disabled!", ephemeral=True)
         self.cache_settings.pop(guild_id)
-        await self.bot.db.execute_write(
-            "DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
+        await self.bot.db.execute(
+            "DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,)
+        )
 
         await interaction.response.send_message("Self-purge has been disabled for this server.", ephemeral=True)
 
@@ -133,9 +135,10 @@ class SelfPurge(commands.Cog):
         execute_time = time.time() + 86400
 
         self.cache_purges[(guild_id, user_id)] = execute_time
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR REPLACE INTO scheduled_purges (guild_id, user_id, execute_at) VALUES (?, ?, ?)",
-            (guild_id, user_id, execute_time))
+            (guild_id, user_id, execute_time)
+        )
 
         await interaction.response.send_message(
             f"{interaction.user.mention} has scheduled a self-message purge. All of their messages less than 14 days old will be deleted after a 24-hour buffer period.\n\nIf you're a staff member and want to cancel this, use `/selfpurge modcancel`."
@@ -147,8 +150,9 @@ class SelfPurge(commands.Cog):
 
         if key in self.cache_purges:
             del self.cache_purges[key]
-            await self.bot.db.execute_write(
-                "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", key)
+            await self.bot.db.execute(
+                "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", key
+            )
             await interaction.response.send_message("Your scheduled purge has been cancelled.", ephemeral=True)
         else:
             await interaction.response.send_message("You don't have a scheduled purge to cancel.", ephemeral=True)
@@ -168,7 +172,7 @@ class SelfPurge(commands.Cog):
             )
 
         del self.cache_purges[key]
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?",
             (guild_id, user_id)
         )
@@ -202,13 +206,16 @@ class SelfPurge(commands.Cog):
             if now >= execute_at:
                 to_execute.append((guild_id, user_id))
 
-        for guild_id, user_id in to_execute:
-            if (guild_id, user_id) in self.cache_purges:
-                del self.cache_purges[(guild_id, user_id)]
-            await self.bot.db.execute_write(
-                "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", (guild_id, user_id))
-
-            asyncio.create_task(self.execute_purge(guild_id, user_id))
+        if to_execute:
+            async with self.bot.db.acquire_db() as db:
+                for guild_id, user_id in to_execute:
+                    if (guild_id, user_id) in self.cache_purges:
+                        del self.cache_purges[(guild_id, user_id)]
+                    await db.execute(
+                        "DELETE FROM scheduled_purges WHERE guild_id=? AND user_id=?", (guild_id, user_id)
+                    )
+                    asyncio.create_task(self.execute_purge(guild_id, user_id))
+                await db.commit()
 
     async def execute_purge(self, guild_id: int, user_id: int):
         guild = self.bot.get_guild(guild_id)
@@ -270,10 +277,13 @@ class SelfPurge(commands.Cog):
         return chunk
 
     async def data_export_guild(self, guild_id: int) -> DataExportChunk:
-        settings = await self.bot.db.execute(
-            "SELECT guild_id, enabled FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
-        purges = await self.bot.db.execute(
-            "SELECT guild_id, user_id, execute_at FROM scheduled_purges WHERE guild_id = ?", (guild_id,))
+        async with self.bot.db.acquire_db() as db:
+            settings = await db.execute(
+                "SELECT guild_id, enabled FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,)
+            )
+            purges = await db.execute(
+                "SELECT guild_id, user_id, execute_at FROM scheduled_purges WHERE guild_id = ?", (guild_id,)
+            )
         chunk = DataExportChunk(feature_id="selfpurge")
         chunk.guild_data[guild_id] = {"settings": settings, "scheduled_purges": purges}
         return chunk
@@ -282,12 +292,15 @@ class SelfPurge(commands.Cog):
         if feature_id and feature_id != "selfpurge":
             return DataDeleteResult(feature_id="selfpurge")
         if guild_ids is None:
-            await self.bot.db.execute_write("DELETE FROM scheduled_purges WHERE user_id = ?", (user_id,))
+            await self.bot.db.execute("DELETE FROM scheduled_purges WHERE user_id = ?", (user_id,))
             keys = [(g, u) for (g, u) in self.cache_purges if u == user_id]
         else:
-            for gid in guild_ids:
-                await self.bot.db.execute_write(
-                    "DELETE FROM scheduled_purges WHERE guild_id = ? AND user_id = ?", (gid, user_id))
+            async with self.bot.db.acquire_db() as db:
+                for gid in guild_ids:
+                    await db.execute(
+                        "DELETE FROM scheduled_purges WHERE guild_id = ? AND user_id = ?", (gid, user_id)
+                    )
+                await db.commit()
             keys = [(gid, user_id) for gid in guild_ids if (gid, user_id) in self.cache_purges]
         for key in keys:
             self.cache_purges.pop(key, None)
@@ -300,8 +313,12 @@ class SelfPurge(commands.Cog):
         for key in purge_keys:
             self.cache_purges.pop(key, None)
         self.cache_settings.pop(guild_id, None)
-        await self.bot.db.execute_write("DELETE FROM scheduled_purges WHERE guild_id = ?", (guild_id,))
-        await self.bot.db.execute_write("DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
+
+        async with self.bot.db.acquire_db() as db:
+            await db.execute("DELETE FROM scheduled_purges WHERE guild_id = ?", (guild_id,))
+            await db.execute("DELETE FROM selfpurge_guild_settings WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+
         return DataDeleteResult(
             feature_id="selfpurge", deleted=True, rows_affected=len(purge_keys) + 1)
 

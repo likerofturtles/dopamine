@@ -201,7 +201,7 @@ class SkullboardCog(commands.Cog):
         if guild_id in self.settings_cache:
             return self.settings_cache[guild_id]
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "INSERT OR IGNORE INTO skullboard_guild_settings (guild_id, enabled) VALUES (?, 0)",
             (guild_id,)
         )
@@ -224,11 +224,11 @@ class SkullboardCog(commands.Cog):
         set_clause = ", ".join(f"{key} = ?" for key in kwargs.keys())
         values = list(kwargs.values()) + [guild_id]
 
-        await self.bot.db.execute_write(f"UPDATE skullboard_guild_settings SET {set_clause} WHERE guild_id = ?", values)
+        await self.bot.db.execute(f"UPDATE skullboard_guild_settings SET {set_clause} WHERE guild_id = ?", values)
 
     def get_skull_emoji(self, count: int) -> str:
         if count >= 15:
-            return "☠"
+            return "💀"
         else:
             return "💀"
 
@@ -238,7 +238,7 @@ class SkullboardCog(commands.Cog):
             self.skull_posts_cache[guild_id] = {}
         self.skull_posts_cache[guild_id][source_id] = skullboard_id
 
-        await self.bot.db.execute_write("""
+        await self.bot.db.execute("""
                              INSERT INTO skull_posts (guild_id, source_message_id, skullboard_message_id)
                              VALUES (?, ?, ?) ON CONFLICT(guild_id, source_message_id) DO
                              UPDATE SET
@@ -250,7 +250,7 @@ class SkullboardCog(commands.Cog):
         if guild_id in self.skull_posts_cache:
             self.skull_posts_cache[guild_id].pop(source_id, None)
 
-        await self.bot.db.execute_write(
+        await self.bot.db.execute(
             "DELETE FROM skull_posts WHERE guild_id = ? AND source_message_id = ?",
             (guild_id, source_id)
         )
@@ -418,7 +418,8 @@ class SkullboardCog(commands.Cog):
 
         try:
             settings = await self.get_guild_settings(payload.guild_id)
-            sbc = self.bot.get_channel(settings["skullboard_channel_id"]) or await self.bot.fetch_channel(settings["skullboard_channel_id"])
+            sbc = self.bot.get_channel(settings["skullboard_channel_id"]) or await self.bot.fetch_channel(
+                settings["skullboard_channel_id"])
             sbm = await sbc.fetch_message(existing)
             await sbm.delete()
         except:
@@ -451,7 +452,8 @@ class SkullboardCog(commands.Cog):
         except:
             pass
 
-    @beacon_commands.command(name="skullboard", description="Configure the Skullboard via Dashboard", permissions_preset="automation")
+    @beacon_commands.command(name="skullboard", description="Configure the Skullboard via Dashboard",
+                             permissions_preset="automation")
     async def skullboard_dashboard(self, interaction: discord.Interaction):
         await self.get_guild_settings(interaction.guild.id)
         view = SkullboardDashboard(interaction.user, self, interaction.guild.id)
@@ -473,7 +475,7 @@ class SkullboardCog(commands.Cog):
         content_str = f"💀 {count} in {ref.channel.mention}"
 
         channel = self.bot.get_channel(sb_id) or await self.bot.fetch_channel(sb_id)
-        channel.send(content=content_str, embed=embed)
+        await channel.send(content=content_str, embed=embed)
 
     def data_features(self) -> list[DataFeatureMeta]:
         return [DataFeatureMeta(
@@ -496,7 +498,8 @@ class SkullboardCog(commands.Cog):
         chunk.guild_data[guild_id] = {"settings": settings, "skull_posts": posts}
         return chunk
 
-    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None, feature_id: str | None) -> DataDeleteResult:
+    async def data_delete_user(self, user_id: int, *, guild_ids: list[int] | None,
+                               feature_id: str | None) -> DataDeleteResult:
         return DataDeleteResult(feature_id="skullboard")
 
     async def data_delete_guild(self, guild_id: int, feature_id: str | None) -> DataDeleteResult:
@@ -504,11 +507,14 @@ class SkullboardCog(commands.Cog):
             return DataDeleteResult(feature_id="skullboard")
         rows_affected = 0
         async with self.bot.db.acquire_db() as db:
-            async with db.execute("DELETE FROM skull_posts WHERE guild_id = ?", (guild_id,)) as cur:
-                rows_affected += cur.rowcount
-            async with db.execute("DELETE FROM skullboard_guild_settings WHERE guild_id = ?", (guild_id,)) as cur:
-                rows_affected += cur.rowcount
+            res_posts = await db.execute("DELETE FROM skull_posts WHERE guild_id = ?", (guild_id,))
+            rows_affected += res_posts if isinstance(res_posts, int) else res_posts.get("rowcount", 0)
+
+            res_settings = await db.execute("DELETE FROM skullboard_guild_settings WHERE guild_id = ?", (guild_id,))
+            rows_affected += res_settings if isinstance(res_settings, int) else res_settings.get("rowcount", 0)
+
             await db.commit()
+
         self.settings_cache.pop(guild_id, None)
         self.skull_posts_cache.pop(guild_id, None)
         return DataDeleteResult(feature_id="skullboard", deleted=True, rows_affected=rows_affected)
